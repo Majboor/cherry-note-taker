@@ -20,9 +20,13 @@ final class ClipStore {
 
     // Adaptive capture sound: a fresh copy plays at full volume; re-copying the
     // same thing gets dimmer and dimmer (resets as soon as something new is copied).
+    // Some apps write the pasteboard 2-3 times for one ⌘C (plain + rich flavors),
+    // which would stack sounds — so plays inside a short window are coalesced and
+    // a new sound always stops the previous one instead of overlapping it.
     private var lastSoundSig = ""
     private var repeatStreak = 0
     private var player: NSSound?
+    private var lastPlayAt: TimeInterval = 0
 
     init() { load(); reclassifyExisting(); lastChange = NSPasteboard.general.changeCount }
 
@@ -36,11 +40,17 @@ final class ClipStore {
     }
 
     private func playCapture(sig: String) {
-        if sig == lastSoundSig { repeatStreak += 1 } else { repeatStreak = 0; lastSoundSig = sig }
+        let doubleWrite = sig == lastSoundSig && Date().timeIntervalSince1970 - lastPlayAt < 1.6
+        if sig == lastSoundSig { if !doubleWrite { repeatStreak += 1 } } else { repeatStreak = 0; lastSoundSig = sig }
+        if doubleWrite { return }   // same content again within the window = one ⌘C, one sound
         playSound(volume: repeatStreak == 0 ? 1.0 : Float(max(0.06, pow(0.5, Double(repeatStreak)))))
     }
     func playSound(volume: Float) {
         guard ClipStore.soundOn else { return }
+        let now = Date().timeIntervalSince1970
+        if now - lastPlayAt < 0.35 { return }   // never fire twice back-to-back
+        lastPlayAt = now
+        player?.stop()   // no overlapping tails
         guard let s = NSSound(named: NSSound.Name(ClipStore.soundName))?.copy() as? NSSound else { return }
         s.volume = volume
         player = s   // keep a reference so it isn't deallocated mid-play

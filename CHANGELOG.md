@@ -37,6 +37,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 ### Changed
 - **Deleting a note moves it to the macOS Trash** (recoverable) instead of removing it outright.
 
+### Fixed
+- **Overlapping capture sounds.** Apps that write the pasteboard more than once per ⌘C
+  (plain + rich flavors) triggered stacked sounds; plays are now coalesced within a short
+  window and a new sound stops the previous one instead of overlapping its tail.
+
 ## [1.5.0]
 
 ### Added
