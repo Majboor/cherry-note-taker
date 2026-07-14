@@ -43,7 +43,15 @@ final class ClipStore {
         let doubleWrite = sig == lastSoundSig && Date().timeIntervalSince1970 - lastPlayAt < 1.6
         if sig == lastSoundSig { if !doubleWrite { repeatStreak += 1 } } else { repeatStreak = 0; lastSoundSig = sig }
         if doubleWrite { return }   // same content again within the window = one ⌘C, one sound
-        playSound(volume: repeatStreak == 0 ? 1.0 : Float(max(0.06, pow(0.5, Double(repeatStreak)))))
+        if repeatStreak > 0 {
+            // Duplicate copy: macOS already plays its own "you copied that already" sound,
+            // so Cherry stays quiet — one signal per event, no overlap. Restore the old
+            // dimming pops with: defaults write com.hico.nasnotes duplicatePops -bool true
+            guard UserDefaults.standard.bool(forKey: "duplicatePops") else { return }
+            playSound(volume: Float(max(0.06, pow(0.5, Double(repeatStreak)))))
+            return
+        }
+        playSound(volume: 1.0)
     }
     func playSound(volume: Float) {
         guard ClipStore.soundOn else { return }
