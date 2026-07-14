@@ -7,7 +7,7 @@
 Markdown notes, Spotlight launchers, CherryTree export, and a clipboard history that
 auto-sorts everything you copy — in ~300 lines of dependency-free Swift.
 
-![version](https://img.shields.io/badge/version-1.5.0-2563eb)
+![version](https://img.shields.io/badge/version-1.6.0-2563eb)
 ![platform](https://img.shields.io/badge/macOS-11%2B-lightgrey?logo=apple)
 ![Swift](https://img.shields.io/badge/Swift-5-f05138?logo=swift&logoColor=white)
 ![license](https://img.shields.io/badge/license-MIT-22c55e)
@@ -25,9 +25,13 @@ auto-sorts everything you copy — in ~300 lines of dependency-free Swift.
 
 - 🗂️ **Menu-bar notes** — an **All Notes** list; open any note to read rendered Markdown.
 - ✍️ **Add / edit / delete in-app** — write Markdown, hit **Save**, it's a plain `.md` file.
-- 🔎 **Spotlight launchers** — every note gets its own app; ⌘-Space → type its name → jump straight to it.
-- 📋 **Clipboard history** — everything you copy, auto-sorted by **type** and **date**, with search & favourites.
-- 🌳 **CherryTree export** & one-click **Copy** — grab a whole note (or prompt) instantly.
+- 🖼️ **Embed images & PDFs** — paste or 📎-attach; images render inline, PDFs get an in-note viewer.
+- 🔗 **Wiki-links & backlinks** — `[[Note Title]]` jumps between notes; a **Linked from** section shows what points here.
+- 📌 **Pinned notes, recency sort & drafts that survive** — close the popover mid-edit and pick up where you left off.
+- 🔎 **Spotlight launchers** — every note gets its own app; ⌘-Space → type its name → jump straight to it. Or hit **⌃⌥⌘C** anywhere.
+- 📋 **Clipboard history** — everything you copy, auto-sorted by **type** and **date**, with search & favourites; file clips get **Copy Path / Copy File / Open / Reveal**.
+- 🔊 **Adaptive capture sound** — a soft pop on copy that fades when you re-copy the same thing and resets for new content.
+- 🌳 **CherryTree export**, one-click **Copy**, and **Export as PDF**.
 - 🪶 **No lock-in, no dependencies** — notes are just files in a folder you choose; pure AppKit + WebKit.
 
 <br>

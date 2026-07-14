@@ -18,7 +18,34 @@ final class ClipStore {
     private var lastChange = NSPasteboard.general.changeCount
     private var seq = 0
 
+    // Adaptive capture sound: a fresh copy plays at full volume; re-copying the
+    // same thing gets dimmer and dimmer (resets as soon as something new is copied).
+    private var lastSoundSig = ""
+    private var repeatStreak = 0
+    private var player: NSSound?
+
     init() { load(); reclassifyExisting(); lastChange = NSPasteboard.general.changeCount }
+
+    static var soundOn: Bool {
+        get { UserDefaults.standard.object(forKey: "captureSound") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "captureSound") }
+    }
+    // Default "Pop" — short and soft. Override: defaults write com.hico.nasnotes captureSoundName Tink
+    static var soundName: String {
+        UserDefaults.standard.string(forKey: "captureSoundName") ?? "Pop"
+    }
+
+    private func playCapture(sig: String) {
+        if sig == lastSoundSig { repeatStreak += 1 } else { repeatStreak = 0; lastSoundSig = sig }
+        playSound(volume: repeatStreak == 0 ? 1.0 : Float(max(0.06, pow(0.5, Double(repeatStreak)))))
+    }
+    func playSound(volume: Float) {
+        guard ClipStore.soundOn else { return }
+        guard let s = NSSound(named: NSSound.Name(ClipStore.soundName))?.copy() as? NSSound else { return }
+        s.volume = volume
+        player = s   // keep a reference so it isn't deallocated mid-play
+        s.play()
+    }
 
     // MARK: persistence
     func load() {
@@ -31,6 +58,12 @@ final class ClipStore {
     private func reclassifyExisting() {
         var changed = false
         for i in items.indices {
+            if let n = items[i]["name"] as? String, items[i]["path"] != nil {
+                // pick up new file categories (e.g. pdf) on clips stored before they existed
+                let kind = fileKind(n)
+                if (items[i]["kind"] as? String) == "file", kind != "file" { items[i]["kind"] = kind; changed = true }
+                continue
+            }
             guard let t = items[i]["text"] as? String, items[i]["path"] == nil else { continue }
             let (kind, lang) = classify(t.trimmingCharacters(in: .whitespacesAndNewlines))
             if (items[i]["kind"] as? String) != kind { items[i]["kind"] = kind; changed = true }
@@ -90,6 +123,7 @@ final class ClipStore {
         trimAndSave()
     }
     private func commit(_ sig: String, _ base: [String: Any]) {
+        playCapture(sig: sig)
         if let i = items.firstIndex(where: { ($0["sig"] as? String) == sig }) { bump(i); return }
         var it = base
         it["id"] = newID(); it["ts"] = Date().timeIntervalSince1970; it["sig"] = sig; it["count"] = 1
@@ -118,6 +152,7 @@ final class ClipStore {
         guard let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
               let png = rep.representation(using: .png, properties: [:]) else { return }
         let sig = "i:" + sha(png)
+        playCapture(sig: sig)
         if let i = items.firstIndex(where: { ($0["sig"] as? String) == sig }) { bump(i); return }  // dedup identical images
         let id = newID(); let file = ClipStore.dir + "/img-\(id).png"
         try? png.write(to: URL(fileURLWithPath: file))
@@ -130,6 +165,7 @@ final class ClipStore {
         let e = (name as NSString).pathExtension.lowercased()
         let video = ["mp4","mov","mkv","avi","webm","m4v","flv","wmv","mpg","mpeg","hevc"]
         let image = ["png","jpg","jpeg","gif","heic","webp","tiff","tif","bmp","svg"]
+        if e == "pdf" { return "pdf" }
         if video.contains(e) { return "video" }
         if image.contains(e) { return "image" }
         return "file"
@@ -258,12 +294,32 @@ final class ClipStore {
         let kind = it["kind"] as? String ?? "text"
         if kind == "image", let p = it["path"] as? String, let img = NSImage(contentsOfFile: p) {
             pb.writeObjects([img])
-        } else if let p = it["path"] as? String, kind == "file" || kind == "video" || (kind == "image") {
+        } else if let p = it["path"] as? String, kind == "file" || kind == "video" || kind == "pdf" || (kind == "image") {
             pb.writeObjects([URL(fileURLWithPath: p) as NSURL])
         } else if let t = it["text"] as? String {
             pb.setString(t, forType: .string)
         }
         lastChange = pb.changeCount   // don't re-capture our own copy-back
+        playSound(volume: 0.8)
+    }
+
+    // Explicit variants for file-ish clips: put the path string, or the document
+    // itself (a real file URL you can paste into Finder / Mail / anywhere), on the board.
+    func copyPath(_ id: String) {
+        guard let it = items.first(where: { ($0["id"] as? String) == id }),
+              let p = it["path"] as? String else { return }
+        let pb = NSPasteboard.general; pb.clearContents()
+        pb.setString(p, forType: .string)
+        lastChange = pb.changeCount
+        playSound(volume: 0.8)
+    }
+    func copyFile(_ id: String) {
+        guard let it = items.first(where: { ($0["id"] as? String) == id }),
+              let p = it["path"] as? String else { return }
+        let pb = NSPasteboard.general; pb.clearContents()
+        pb.writeObjects([URL(fileURLWithPath: p) as NSURL])
+        lastChange = pb.changeCount
+        playSound(volume: 0.8)
     }
 
     func setFav(_ id: String, _ fav: Bool) {

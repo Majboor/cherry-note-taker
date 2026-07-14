@@ -103,6 +103,7 @@ let htmlTemplate = #"""
   .badge.link{color:#0a72ff} .badge.code{color:#a855f7} .badge.path{color:#0ea5a5}
   .badge.image{color:#e0873a} .badge.video{color:#e0384e} .badge.file{color:#7d8797} .badge.text{color:#7d8797}
   .badge.email{color:#0a72ff} .badge.phone{color:#22a06b} .badge.color{color:#e0873a} .badge.ip{color:#7c7cff} .badge.error{color:#e0384e}
+  .badge.pdf{color:#d4380d}
   .cnt{display:inline-block;margin-left:6px;font-size:9.5px;font-weight:700;padding:2px 6px;border-radius:999px;
     background:var(--accent);color:#fff;vertical-align:top}
   .swatch{width:42px;height:42px;border-radius:9px;border:.5px solid var(--line);flex:0 0 auto}
@@ -121,6 +122,41 @@ let htmlTemplate = #"""
   .clip .x{color:var(--muted);font-size:15px;align-self:flex-start;padding:0 4px;line-height:1.2}
   .clip .x:hover{color:var(--danger)}
   .ficon{width:42px;height:42px;border-radius:9px;background:var(--code-bg);display:flex;align-items:center;justify-content:center;font-size:20px;flex:0 0 auto}
+
+  /* embedded attachments in notes */
+  .imgblock{margin:10px 0;text-align:center}
+  .imgblock img{max-width:100%;max-height:340px;border-radius:9px;border:.5px solid var(--line);cursor:zoom-in}
+  img.embinl{max-height:200px;max-width:100%;border-radius:7px;border:.5px solid var(--line);vertical-align:middle;cursor:zoom-in}
+  .pdfblock{margin:10px 0;border:.5px solid var(--line);border-radius:10px;overflow:hidden;background:var(--code-bg)}
+  .pdfhead{display:flex;align-items:center;gap:7px;padding:8px 11px;font-size:12.5px;font-weight:600}
+  .pdfhead .pact{appearance:none;border:0;background:transparent;color:var(--accent);font-size:11.5px;
+    font-weight:600;cursor:pointer;padding:3px 7px;border-radius:6px}
+  .pdfhead .pact:hover{background:var(--hover)}
+  .pdfblock embed{width:100%;height:420px;border:0;border-top:.5px solid var(--line);background:#555}
+  a.al{cursor:pointer}
+  a.wl{cursor:pointer;background:var(--code-bg);padding:1px 6px;border-radius:6px;font-weight:600;
+    border:.5px solid var(--line)}
+  a.wl.miss{color:var(--muted);border-style:dashed}
+  .backlinks{margin-top:18px;padding-top:10px;border-top:.5px solid var(--line)}
+  .backlinks .bt{font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
+  .backlinks a{display:inline-block;margin:2px 6px 2px 0;cursor:pointer}
+
+  /* list metadata */
+  .row .when{font-size:10.5px;color:var(--muted);flex:0 0 auto;white-space:nowrap}
+  .row .pin{font-size:11px;flex:0 0 auto}
+
+  /* clip action chips (path / file / open / reveal) */
+  .cacts{display:flex;gap:4px;margin-top:6px}
+  .cacts button{appearance:none;border:.5px solid var(--line);background:var(--panel);color:var(--accent);
+    font-size:10px;font-weight:600;cursor:pointer;padding:2px 8px;border-radius:999px}
+  .cacts button:hover{background:var(--hover)}
+
+  /* full-height layout while printing to PDF */
+  html.pdfmode, .pdfmode body{height:auto}
+  .pdfmode .wrap{height:auto}
+  .pdfmode main{overflow:visible;height:auto;margin:0;border:0;border-radius:0}
+  .pdfmode header,.pdfmode footer,.pdfmode #toast{display:none}
+  .pdfmode .pdfblock embed{display:none}
 
   /* copy toast */
   #toast{position:fixed;left:50%;bottom:16px;transform:translate(-50%,20px);opacity:0;pointer-events:none;
@@ -149,9 +185,17 @@ let htmlTemplate = #"""
 <script>
   const NOTES = /*__NOTES__*/;
   let CLIPS = /*__CLIPS__*/;
-  let view = "/*__VIEW__*/";           // home | note | edit | clips
+  let view = "/*__VIEW__*/";           // home | note | edit | clips | new
   let active = /*__ACTIVE__*/;
+  const injectedDraft = /*__DRAFT__*/null;   // an interrupted edit, restored by the app
   let draft = null;
+  if(view==='new'){ draft={name:'',body:'',isNew:true}; view='edit'; }
+  else if(injectedDraft && injectedDraft.body!==undefined && view!=='clips'){
+    draft={name:injectedDraft.name||'', body:injectedDraft.body||'', isNew:!!injectedDraft.isNew};
+    const i=NOTES.findIndex(n=>n.name===draft.name);
+    if(!draft.isNew && i>=0) active=i;
+    view='edit';
+  }
   let noteFilter = 'All';
   let noteSearch = '';
   let clipFilter = 'all';
@@ -159,7 +203,7 @@ let htmlTemplate = #"""
 
   function cur(){ return NOTES[active] || {name:'',title:'',body:''}; }
   function send(action, extra){ try{ window.webkit.messageHandlers.bridge.postMessage(Object.assign({action:action}, extra||{})); }catch(e){} }
-  function escHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function escHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
   function titleOf(body){ const m=stripFM(body).split('\n').find(l=>/^#\s/.test(l.trim())); return m?m.trim().replace(/^#\s+/,''):'Untitled'; }
   // Remove a leading YAML frontmatter block (--- … ---) so it never shows in the note view or preview.
   function stripFM(body){
@@ -179,10 +223,50 @@ let htmlTemplate = #"""
   function uniqueSlug(t){ let b=slugify(t), s=b, i=2; const names=NOTES.map(n=>n.name.toLowerCase());
     while(names.indexOf(s)>=0){ s=b+'-'+i; i++; } return s; }
 
+  // ---------- attachments + wiki links ----------
+  function assetUrl(n){ return 'cherry://asset/'+encodeURIComponent(n); }
+  function isImgName(n){ return /\.(png|jpe?g|gif|heic|webp|tiff?|bmp|svg)$/i.test(n); }
+  function noteIndexByRef(ref){
+    const w=(ref||'').trim().toLowerCase();
+    return NOTES.findIndex(n=>n.title.toLowerCase()===w||n.name.toLowerCase()===w);
+  }
+  function openWiki(ref){
+    const i=noteIndexByRef(ref);
+    if(i>=0){ openNote(i); return; }
+    if(confirm('No note called “'+ref+'” yet. Create it?')){
+      draft={name:'', body:'# '+ref+'\n\n', isNew:true, presetName:ref}; view='edit'; route();
+      setTimeout(function(){ const nm=document.getElementById('nm'); if(nm){ nm.value=ref; } },0);
+    }
+  }
+  function wikiLink(m,ref){
+    const i=noteIndexByRef(ref);
+    return '<a class="wl'+(i<0?' miss':'')+'" data-n="'+ref+'" onclick="openWiki(this.dataset.n)">'+ref+'</a>';
+  }
   function inl(s){ return s
     .replace(/`([^`]+)`/g,function(m,c){return '<code>'+c+'</code>';})
+    .replace(/!\[([^\]]*)\]\(assets\/([^)]+)\)/g,function(m,alt,f){
+      return '<img class="embinl" data-f="'+f+'" src="'+assetUrl(f)+'" onclick="send(\'open-asset\',{file:this.dataset.f})">'; })
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g,'<img class="embinl" src="$2">')
     .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="$2">$1</a>'); }
+    .replace(/\[([^\]]+)\]\(assets\/([^)]+)\)/g,function(m,txt,f){
+      return '<a class="al" data-f="'+f+'" onclick="send(\'open-asset\',{file:this.dataset.f})">📎 '+txt+'</a>'; })
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="$2">$1</a>')
+    .replace(/\[\[([^\[\]|]+)\]\]/g,wikiLink); }
+  // Block-level attachment cards: a lone image gets a figure, a lone PDF an inline viewer.
+  function attachBlock(line){
+    let m=line.match(/^!?\[([^\]]*)\]\(assets\/([^)]+)\)\s*$/); if(!m) return null;
+    const f=m[2], label=m[1]||f, ef=escHtml(f);
+    if(isImgName(f)){
+      return '<div class="imgblock"><img data-f="'+ef+'" src="'+assetUrl(f)+'" onclick="send(\'open-asset\',{file:this.dataset.f})"></div>';
+    }
+    const isPdf=/\.pdf$/i.test(f);
+    let h='<div class="pdfblock"><div class="pdfhead">'+(isPdf?'📕':'📎')+' '+escHtml(label)+'<span class="spring"></span>'
+      +'<button class="pact" data-f="'+ef+'" onclick="send(\'open-asset\',{file:this.dataset.f})">Open</button>'
+      +'<button class="pact" data-f="'+ef+'" onclick="send(\'reveal-asset\',{file:this.dataset.f})">Reveal</button>'
+      +'<button class="pact" data-f="'+ef+'" onclick="send(\'copy-asset-path\',{file:this.dataset.f});showToast(\'📎\',\'Copied\',\'Full path on clipboard\')">Path</button></div>';
+    if(isPdf) h+='<embed src="'+assetUrl(f)+'" type="application/pdf">';
+    return h+'</div>';
+  }
   function md(src){
     const L=(src||'').split('\n'); let out=''; let i=0; let inList=false;
     const closeL=()=>{ if(inList){out+='</ul>';inList=false;} };
@@ -190,6 +274,7 @@ let htmlTemplate = #"""
       if(line.trim().indexOf('```')===0){ closeL(); i++; let code='';
         while(i<L.length && L[i].trim().indexOf('```')!==0){ code+=L[i]+'\n'; i++; } i++;
         out+='<pre><code>'+escHtml(code.replace(/\n$/,''))+'</code></pre>'; continue; }
+      const ab=attachBlock(line.trim()); if(ab){ closeL(); out+=ab; i++; continue; }
       if(/^#{1,6}\s/.test(line)){ closeL(); const m=line.match(/^(#{1,6})\s+(.*)$/); let lvl=m[1].length; if(lvl>3)lvl=3;
         out+='<h'+lvl+' class="md">'+inl(escHtml(m[2]))+'</h'+lvl+'>'; }
       else if(/^\s*---\s*$/.test(line)){ closeL(); out+='<hr>'; }
@@ -211,7 +296,7 @@ let htmlTemplate = #"""
   function openNote(i){ active=i; view='note'; route(); }
   function openEdit(){ const n=cur(); draft={name:n.name, body:n.body, isNew:false}; view='edit'; route(); }
   function addNote(){ draft={name:'', body:'', isNew:true}; view='edit'; route(); }
-  function cancelEdit(){ draft=null; view = (NOTES.length? (cur().name?'note':'home'):'home'); route(); }
+  function cancelEdit(){ draft=null; send('draft-clear'); view = (NOTES.length? (cur().name?'note':'home'):'home'); route(); }
   function saveEdit(){
     let body=document.getElementById('ta').value;
     let name=draft.name;
@@ -229,6 +314,65 @@ let htmlTemplate = #"""
     }
     send('save',{name:name, body:body});
     draft=null; view='note'; route();
+    showToast('💾','Saved',name+'.md');
+  }
+
+  // ---------- draft safety net (nothing typed is ever lost) ----------
+  function __snapDraft(){
+    if(view!=='edit'||!draft) return null;
+    const ta=document.getElementById('ta'); if(!ta) return null;
+    const nm=document.getElementById('nm');
+    return {name:(draft.isNew?((nm&&nm.value)||''):draft.name), body:ta.value, isNew:!!draft.isNew};
+  }
+  window.__snapDraft=__snapDraft;
+  let draftT=null;
+  function draftTick(){
+    if(draftT) clearTimeout(draftT);
+    draftT=setTimeout(function(){ const d=__snapDraft(); if(d) send('draft',d); },600);
+  }
+
+  // Insert text at the cursor (used by the app after importing an attachment).
+  function __insertSnippet(text){
+    const ta=document.getElementById('ta'); if(!ta) return;
+    const s=ta.selectionStart||0;
+    ta.setRangeText(text, s, ta.selectionEnd||s, 'end');
+    ta.focus(); updateWC(); draftTick();
+  }
+  window.__insertSnippet=__insertSnippet;
+
+  function updateWC(){
+    const ta=document.getElementById('ta'), el=document.getElementById('wc');
+    if(!ta||!el) return;
+    const t=ta.value, words=(t.match(/\S+/g)||[]).length;
+    el.textContent=words+' words · '+t.length+' chars';
+  }
+
+  // ---------- full-page PDF export helpers ----------
+  function __preparePDF(){
+    document.documentElement.classList.add('pdfmode');
+    return document.documentElement.scrollHeight;
+  }
+  function __endPDF(){ document.documentElement.classList.remove('pdfmode'); }
+  window.__preparePDF=__preparePDF; window.__endPDF=__endPDF;
+
+  // ---------- pin / unpin (stored as frontmatter, so it survives in the .md file) ----------
+  function setFM(body,key,val){
+    let s=body||'';
+    const m=s.match(/^---\s*\n([\s\S]*?)\n---\s*\n?/);
+    if(m){
+      let block=m[1].split('\n').filter(function(l){ return l.split(':')[0].trim().toLowerCase()!==key; });
+      if(val!==null) block.push(key+': '+val);
+      return '---\n'+block.join('\n')+'\n---\n'+s.slice(m[0].length);
+    }
+    return val===null ? s : '---\n'+key+': '+val+'\n---\n'+s;
+  }
+  function togglePin(){
+    const n=cur(); if(!n.name) return;
+    n.pinned=!n.pinned;
+    n.body=setFM(n.body,'pinned',n.pinned?'true':null);
+    send('save',{name:n.name, body:n.body});
+    showToast(n.pinned?'📌':'📄', n.pinned?'Pinned':'Unpinned', n.title);
+    route();
   }
 
   // ---------- markdown formatting toolbar (for people who don't write Markdown) ----------
@@ -264,7 +408,18 @@ let htmlTemplate = #"""
      +'<button title="Inline code" onclick="surround(\'`\',\'`\')">&lt;/&gt;</button>'
      +'<span class="sep"></span>'
      +'<button title="Link" onclick="mdLink()">&#128279;</button>'
+     +'<button title="Link to another note — [[Note]]" onclick="wikiInsert()">[[&nbsp;]]</button>'
+     +'<button title="Attach image / PDF / file" onclick="send(\'attach\')">&#128206;</button>'
      +'</div>';
+  }
+  function wikiInsert(){
+    const ta=taEl(); if(!ta) return; const s=ta.selectionStart, e=ta.selectionEnd;
+    const sel=ta.value.slice(s,e);
+    if(sel){ surround('[[',']]'); return; }
+    const names=NOTES.map(function(n){return n.title;}).join(', ');
+    const ref=prompt('Link to which note?'+(names?'\n('+names.slice(0,200)+(names.length>200?'…':'')+')':''),'');
+    if(!ref) return;
+    ta.setRangeText('[['+ref+']]', s, e, 'end'); ta.focus(); draftTick();
   }
   function delNote(){ const n=cur(); if(!confirm('Delete “'+n.title+'”? This removes the note and its Spotlight app.')) return;
     send('delete',{name:n.name}); NOTES.splice(active,1); active=0; draft=null; view='home'; route(); }
@@ -272,19 +427,40 @@ let htmlTemplate = #"""
   // ---------- clipboard ----------
   function showClips(){ view='clips'; route(); }
   const KINDS=[['fav','★'],['all','All'],['link','Links'],['email','Emails'],['code','Code'],['error','Errors'],
-    ['path','Paths'],['color','Colors'],['ip','IPs'],['phone','Phones'],['image','Images'],['video','Videos'],['file','Files'],['text','Text']];
+    ['path','Paths'],['color','Colors'],['ip','IPs'],['phone','Phones'],['image','Images'],['video','Videos'],['pdf','PDFs'],['file','Files'],['text','Text']];
   function twoDigit(n){ return (n<10?'0':'')+n; }
+  function agoStr(ts){
+    const s=Math.max(0,Date.now()/1000-ts);
+    if(s<60) return 'now'; if(s<3600) return Math.floor(s/60)+'m';
+    if(s<86400) return Math.floor(s/3600)+'h'; if(s<86400*30) return Math.floor(s/86400)+'d';
+    const d=new Date(ts*1000); return d.toLocaleDateString(undefined,{month:'short',day:'numeric'});
+  }
   function timeStr(ts){ const d=new Date(ts*1000); return twoDigit(d.getHours())+':'+twoDigit(d.getMinutes()); }
   function dayKey(ts){ const d=new Date(ts*1000); const n=new Date();
     const dd=new Date(d.getFullYear(),d.getMonth(),d.getDate()); const t0=new Date(n.getFullYear(),n.getMonth(),n.getDate());
     const diff=Math.round((t0-dd)/86400000);
     if(diff===0) return 'Today'; if(diff===1) return 'Yesterday'; if(diff>1&&diff<7) return d.toLocaleDateString(undefined,{weekday:'long'});
     return d.toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'}); }
-  function icon(kind){ return kind==='video'?'🎞':kind==='file'?'📄':kind==='image'?'🖼':'📋'; }
+  function icon(kind){ return kind==='video'?'🎞':kind==='pdf'?'📕':kind==='file'?'📄':kind==='image'?'🖼':'📋'; }
+  function hasFileActions(c){ return c.path && (c.kind==='image'||c.kind==='video'||c.kind==='file'||c.kind==='pdf'); }
+  function clipActs(c){
+    if(!hasFileActions(c)) return '';
+    return '<div class="cacts">'
+      +'<button onclick="actClip(event,\''+c.id+'\',\'clip-copy-path\',\'Path copied\')">Copy Path</button>'
+      +'<button onclick="actClip(event,\''+c.id+'\',\'clip-copy-file\',\'File copied — paste it anywhere\')">Copy File</button>'
+      +'<button onclick="actClip(event,\''+c.id+'\',\'clip-open\',\'Opening…\')">Open</button>'
+      +'<button onclick="actClip(event,\''+c.id+'\',\'clip-reveal\',\'Showing in Finder\')">Reveal</button></div>';
+  }
+  function actClip(ev,id,action,msg){
+    ev.stopPropagation();
+    const c=CLIPS.find(x=>x.id===id); if(!c) return;
+    send(action,{id:id});
+    showToast(clipInner(c)||icon(c.kind), msg, shortLabel(c));
+  }
   function badgeText(c){ return c.kind==='code' ? ('Code'+(c.lang?' · '+c.lang:'')) : c.kind; }
   function clipInner(c){
     if(c.kind==='image'){ return (c.thumb?'<img class="thumb" src="'+c.thumb+'">':'<div class="ficon">🖼</div>'); }
-    if(c.kind==='video'||c.kind==='file'){ return '<div class="ficon">'+icon(c.kind)+'</div>'; }
+    if(c.kind==='video'||c.kind==='file'||c.kind==='pdf'){ return '<div class="ficon">'+icon(c.kind)+'</div>'; }
     if(c.kind==='color'){ return '<div class="swatch" style="background:'+escHtml(c.preview||'#000')+'"></div>'; }
     return '';
   }
@@ -293,14 +469,14 @@ let htmlTemplate = #"""
     if(c.kind==='code'||c.kind==='path'||c.kind==='error') cls='prev mono';
     else if(c.kind==='link'||c.kind==='email') cls='prev linkish';
     let meta='';
-    if(c.kind==='image'||c.kind==='video'||c.kind==='file'){ txt=escHtml(c.name||'file'); meta=escHtml(c.path||''); }
+    if(c.kind==='image'||c.kind==='video'||c.kind==='file'||c.kind==='pdf'){ txt=escHtml(c.name||'file'); meta=escHtml(c.path||''); }
     else if(c.len&&c.len>1400){ meta=(c.len)+' chars'; }
     const cnt=(c.count&&c.count>1)?'<span class="cnt">×'+c.count+'</span>':'';
     return '<span class="badge '+c.kind+'">'+escHtml(badgeText(c))+'</span>'+cnt
       +'<div class="'+cls+'">'+txt+'</div>'+(meta?'<div class="cmeta">'+meta+'</div>':'');
   }
   function shortLabel(c){
-    if(c.kind==='image'||c.kind==='video'||c.kind==='file') return c.name||'file';
+    if(c.kind==='image'||c.kind==='video'||c.kind==='file'||c.kind==='pdf') return c.name||'file';
     let s=(c.preview||'').replace(/\s+/g,' ').trim();
     return s.length>60 ? s.slice(0,60)+'…' : s;
   }
@@ -335,7 +511,7 @@ let htmlTemplate = #"""
       const dk=dayKey(c.ts);
       if(dk!==lastDay){ html+='<div class="daterow">'+escHtml(dk)+'</div>'; lastDay=dk; }
       html+='<div class="clip" onclick="copyClip(\''+c.id+'\')">'
-        +clipInner(c)+'<div class="cbody">'+clipMain(c)+'<div class="cmeta">'+timeStr(c.ts)+'</div></div>'
+        +clipInner(c)+'<div class="cbody">'+clipMain(c)+clipActs(c)+'<div class="cmeta">'+timeStr(c.ts)+'</div></div>'
         +'<span class="star'+(c.fav?' on':'')+'" onclick="toggleFav(\''+c.id+'\',event)">'+(c.fav?'★':'☆')+'</span>'
         +'<span class="x" onclick="delClip(\''+c.id+'\',event)">×</span></div>';
     });
@@ -366,9 +542,10 @@ let htmlTemplate = #"""
       .map(function(o){ const n=o.n; const col=catColor(n.category||'General');
         const tags=(n.tags&&n.tags.length)?'<div class="tags">'+n.tags.slice(0,4).map(function(t){return '<span class="tag" style="color:'+col+';border-color:'+col+'40">'+escHtml(t)+'</span>';}).join('')+'</div>':'';
         const pill='<div class="cat" style="color:'+col+';border-color:'+col+'66">'+escHtml(n.category||'General')+'</div>';
-        return '<div class="row" onclick="openNote('+o.idx+')"><div class="ic" style="color:'+col+'">'+(n.name==='email'?'✉️':'🗄️')+'</div>'
+        return '<div class="row" onclick="openNote('+o.idx+')"><div class="ic" style="color:'+col+'">'+(n.pinned?'📌':(n.name==='email'?'✉️':'🗄️'))+'</div>'
           +'<div class="tx"><div class="tt">'+escHtml(n.title)+'</div><div class="pv">'+escHtml(firstText(n.body))+'</div>'+tags+'</div>'
           +((noteFilter==='All'&&!noteSearch)?pill:'')
+          +(n.mtime?'<div class="when">'+agoStr(n.mtime)+'</div>':'')
           +'<div class="chev">›</div></div>';
       }).join('');
     cont.innerHTML = rows || '<div class="empty">'+(noteSearch?'No notes match “'+escHtml(noteSearch)+'”.':'Nothing in “'+escHtml(noteFilter)+'”.')+'</div>';
@@ -408,10 +585,20 @@ let htmlTemplate = #"""
     else if(view==='note'){
       const n=cur();
       bar().innerHTML='<button class="nav l" onclick="goHome()">‹ Notes</button>'
-        +'<div class="mid">'+escHtml(n.title)+'</div>'
+        +'<div class="mid">'+(n.pinned?'📌 ':'')+escHtml(n.title)+'</div>'
         +'<button class="nav r strong" onclick="openEdit()">Edit</button>';
-      appEl().className='pad'; appEl().innerHTML=md(stripFM(n.body)); appEl().scrollTop=0;
-      foot().innerHTML='<button class="btn" onclick="send(\'copy\',{text:stripFM(cur().body)})">Copy</button>'
+      // backlinks — every other note whose body wiki-links [[here]]
+      const refs=NOTES.map(function(o,idx){return {o:o,idx:idx};}).filter(function(x){
+        if(x.o.name===n.name) return false;
+        const b=(x.o.body||'').toLowerCase();
+        return b.indexOf('[['+n.title.toLowerCase()+']]')>=0 || b.indexOf('[['+n.name.toLowerCase()+']]')>=0;
+      });
+      const bl=refs.length?'<div class="backlinks"><div class="bt">Linked from</div>'
+        +refs.map(function(x){return '<a class="wl" onclick="openNote('+x.idx+')">'+escHtml(x.o.title)+'</a>';}).join('')+'</div>':'';
+      appEl().className='pad'; appEl().innerHTML=md(stripFM(n.body))+bl; appEl().scrollTop=0;
+      foot().innerHTML='<button class="btn" onclick="send(\'copy\',{text:stripFM(cur().body)});showToast(\'📋\',\'Copied\',cur().title)">Copy</button>'
+        +'<button class="btn" onclick="togglePin()">'+(n.pinned?'Unpin':'Pin')+'</button>'
+        +'<button class="btn" onclick="send(\'export-pdf\',{name:cur().title})">PDF</button>'
         +'<button class="btn" onclick="send(\'cherrytree\')">CherryTree</button>'
         +'<button class="btn mut" onclick="send(\'reveal\')">Folder</button>'
         +'<span class="spring"></span><button class="btn mut" onclick="send(\'quit\')">Quit</button>';
@@ -425,7 +612,7 @@ let htmlTemplate = #"""
         +(draft.isNew?'<input id="nm" class="nminput" placeholder="Note name — e.g. Deploy steps" value="'+escHtml(draft.name||'')+'">':'')
         +mdToolbar()
         +'<textarea id="ta" spellcheck="false"></textarea>'
-        +'<div class="hint">Use the buttons, or type Markdown'
+        +'<div class="hint"><span id="wc"></span>&nbsp;·&nbsp;paste an image to embed it'
         +(draft.isNew?'':'<span class="del" onclick="delNote()">Delete note</span>')+'</div></div>';
       const ta=document.getElementById('ta'); ta.value=draft.body;
       ta.addEventListener('keydown',function(ev){
@@ -433,9 +620,23 @@ let htmlTemplate = #"""
           const k=(ev.key||'').toLowerCase();
           if(k==='b'){ ev.preventDefault(); surround('**','**'); }
           else if(k==='i'){ ev.preventDefault(); surround('*','*'); }
+          else if(k==='s'){ ev.preventDefault(); saveEdit(); }
         }
       });
-      if(draft.isNew){ const nm=document.getElementById('nm'); if(nm) nm.focus(); else ta.focus(); }
+      // Pasting an image (or a copied file) embeds it as an attachment instead of doing nothing.
+      ta.addEventListener('paste',function(ev){
+        const cd=ev.clipboardData;
+        if(!cd) return;
+        const hasFiles=Array.prototype.some.call(cd.types||[],function(t){return t==='Files';});
+        const hasImg=Array.prototype.some.call(cd.items||[],function(it){return it.type&&it.type.indexOf('image/')===0;});
+        const hasText=Array.prototype.some.call(cd.types||[],function(t){return t==='text/plain';});
+        if((hasFiles||hasImg)&&!hasText){ ev.preventDefault(); send('paste-attach'); }
+      });
+      ta.addEventListener('input',function(){ updateWC(); draftTick(); });
+      const nmEl=document.getElementById('nm');
+      if(nmEl) nmEl.addEventListener('input',draftTick);
+      updateWC();
+      if(draft.isNew){ if(nmEl&&!nmEl.value) nmEl.focus(); else ta.focus(); }
       else ta.focus();
       foot().innerHTML='';
     }
@@ -459,6 +660,21 @@ let htmlTemplate = #"""
         +'<button class="btn mut" onclick="send(\'quit\')">Quit</button>';
     }
   }
+  // ---------- keyboard shortcuts ----------
+  document.addEventListener('keydown',function(ev){
+    const k=(ev.key||'').toLowerCase();
+    if((ev.metaKey||ev.ctrlKey)&&!ev.shiftKey&&!ev.altKey){
+      if(k==='n'&&view!=='edit'){ ev.preventDefault(); addNote(); }
+      else if(k==='f'){
+        if(view==='home'||view==='clips'){ ev.preventDefault();
+          const q=document.getElementById(view==='home'?'noteq':'clipq'); if(q) q.focus(); }
+      }
+    } else if(k==='escape'){
+      if(view==='note'){ ev.preventDefault(); goHome(); }
+      else if(view==='clips'){ ev.preventDefault(); goHome(); }
+      // in the editor Esc is left alone — drafts are preserved anyway
+    }
+  });
   route();
 </script></body></html>
 """#
