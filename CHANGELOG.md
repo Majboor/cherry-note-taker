@@ -3,6 +3,49 @@
 All notable changes to this project are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.8.0]
+
+### Changed
+- **Near-instant popover, however many notes you have.** The notes folder is now indexed
+  once and kept in memory; a folder watcher re-reads only files that changed. Clicking the
+  menu-bar icon no longer re-reads every `.md` file, nor rebuilds the whole page — the page is
+  loaded once and just switches view. The index sent to the page carries titles, categories,
+  tags and a one-line preview only; a note's **body is fetched when you open it**, full-text
+  search runs in the app (title/tag/preview matches still show instantly), and backlinks are
+  computed app-side. Per open, the page went from ~4 MB of inline data to ~30 KB.
+- **Clipboard and Screen lists load on demand.** They're fetched when their tab opens, and
+  thumbnails stream through `cherry://cthumb/` and `cherry://sthumb/` instead of riding
+  inline as base64 (~2.7 MB every click before).
+- **Saves no longer thrash the disk.** `make-launchers.sh` leaves launchers that already
+  exist alone instead of deleting, rebuilding and re-signing every one on every save; run
+  logs are skipped before any per-file work; `rebuild.sh` serialises concurrent rebuilds.
+
+### Added
+- **⚙️ Runs — automation run logs, kept apart.** Notes named `*-run-<timestamp>` (the ones
+  scheduled agents write, thousands of them) no longer appear in the notes list, the category
+  counts, the full-screen window or Spotlight. A **Runs** chip opens them in their own view:
+  per-agent filter chips with counts, search, newest first, paged in 40 at a time with
+  **Show more**. Open one to read/edit it like any note.
+- Live updates: a note created or changed by another tool shows up in the open popover (and
+  the full-screen window, when you're not mid-edit) without reopening it.
+
+## [1.7.0]
+
+### Added
+- **Screen tab — a home for your screenshots & recordings.** A new **🖼 Screen** tab sits
+  beside Clipboard in the quick-note popover. Cherry watches the macOS screen-capture folder
+  (the Screenshot.app "Save to" location, Desktop by default) and every new screenshot
+  (⌘⇧4) or screen recording (⌘⇧5) lands here automatically, detected by the
+  `kMDItemIsScreenCapture` marker macOS stamps on captures. Captures are filed by day, with
+  **Screenshots / Recordings** filter chips and search over name + note.
+- **Annotate a capture.** Click any capture to open a full preview (streamed via a sandboxed
+  `cherry://screen/` handler) with a **Note** field — jot what it's for, ⌘S to save. Notes
+  show as a preview line back in the list.
+- **Reveal in Finder / Open / Copy File.** Each capture (in the list and the detail view)
+  can be revealed in Finder with the file selected, opened, or copied as a real file to paste
+  anywhere. Cherry never moves or deletes the underlying file — "remove" just forgets it from
+  the list. Also reachable from the menu-bar right-click menu → **Screen Captures**.
+
 ## [1.6.0]
 
 ### Added

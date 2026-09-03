@@ -54,6 +54,11 @@ let htmlTemplate = #"""
   .chip .cc{opacity:.65;font-weight:700;font-size:10px;margin-left:2px}
   .chip.active .cc{opacity:.85}
   .empty{color:var(--muted);text-align:center;padding:40px 20px;font-size:13px}
+  .empty.loading{padding:24px;letter-spacing:3px;opacity:.6}
+  .chip.runchip{margin-left:auto}
+  .row.run .tt{font-weight:500}
+  .more{color:var(--accent);text-align:center;padding:12px;font-size:12.5px;font-weight:600;cursor:pointer}
+  .more:hover{opacity:.8}
 
   /* rendered markdown */
   h1.md{font-size:17px;font-weight:600;margin:0 0 10px}
@@ -126,7 +131,22 @@ let htmlTemplate = #"""
   /* embedded attachments in notes */
   .imgblock{margin:10px 0;text-align:center}
   .imgblock img{max-width:100%;max-height:340px;border-radius:9px;border:.5px solid var(--line);cursor:zoom-in}
+  .imgblock video{max-width:100%;max-height:340px;border-radius:9px;border:.5px solid var(--line);background:#000}
+  .imgblock.shot.vid{position:relative;display:inline-block;cursor:pointer}
+  .imgblock.shot.vid img{cursor:pointer}
+  .shotthumb{position:relative;flex:0 0 auto}
+  .playbadge{position:absolute;right:6px;bottom:6px;width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,.62);
+    color:#fff;font-size:9px;display:flex;align-items:center;justify-content:center;padding-left:1px}
+  .playbadge.big{right:auto;left:50%;top:50%;bottom:auto;transform:translate(-50%,-50%);width:54px;height:54px;font-size:22px;background:rgba(0,0,0,.55)}
+  .cmeta.snote{color:var(--accent);white-space:normal;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .snotebox{margin-top:14px}
+  .snotelbl{font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin:0 2px 6px}
+  .snotebox textarea{width:100%;min-height:150px;resize:vertical;box-sizing:border-box;border:.5px solid var(--line);
+    border-radius:10px;background:var(--code-bg);color:var(--ink);outline:0;padding:11px 13px;
+    font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}
+  .snotebox textarea:focus{border-color:var(--accent)}
   img.embinl{max-height:200px;max-width:100%;border-radius:7px;border:.5px solid var(--line);vertical-align:middle;cursor:zoom-in}
+  video.embinl{max-height:240px;max-width:100%;border-radius:7px;border:.5px solid var(--line);background:#000}
   .pdfblock{margin:10px 0;border:.5px solid var(--line);border-radius:10px;overflow:hidden;background:var(--code-bg)}
   .pdfhead{display:flex;align-items:center;gap:7px;padding:8px 11px;font-size:12.5px;font-weight:600}
   .pdfhead .pact{appearance:none;border:0;background:transparent;color:var(--accent);font-size:11.5px;
@@ -177,31 +197,74 @@ let htmlTemplate = #"""
   .btn:hover{background:var(--hover)} .btn.mut{color:var(--muted)}
 </style></head>
 <body><div class="wrap">
-  <header id="bar"></header>
+  <header id="bar" ondblclick="send('open-app')" title="Double-click to open the full app"></header>
   <main id="app"></main>
   <footer id="foot"></footer>
   <div id="toast"></div>
 </div>
 <script>
-  const NOTES = /*__NOTES__*/;
-  let CLIPS = /*__CLIPS__*/;
-  let view = "/*__VIEW__*/";           // home | note | edit | clips | new
-  let active = /*__ACTIVE__*/;
-  const injectedDraft = /*__DRAFT__*/null;   // an interrupted edit, restored by the app
+  // The page is built ONCE and stays alive. NOTES is a slim index (no bodies) of ordinary notes;
+  // a note's body arrives via __body() when it is opened, run logs are paged in via __runsPage(),
+  // and the clipboard / screen lists via __clips() / __screens() when those tabs open.
+  let NOTES = /*__NOTES__*/;
+  let CLIPS = [], SCREENS = [], clipsLoaded=false, screensLoaded=false;
+  let view = 'home';           // home | note | edit | clips | screens | screen | runs
+  let active = 0;              // index into NOTES, or -1 when a run log is open (see curRun)
+  let curRun = null;           // the open run log's index entry (bodies attach to entries as .body)
+  let noteBack = 'home';       // where ‹ from a note goes: home | runs
   let draft = null;
-  if(view==='new'){ draft={name:'',body:'',isNew:true}; view='edit'; }
-  else if(injectedDraft && injectedDraft.body!==undefined && view!=='clips'){
-    draft={name:injectedDraft.name||'', body:injectedDraft.body||'', isNew:!!injectedDraft.isNew};
-    const i=NOTES.findIndex(n=>n.name===draft.name);
-    if(!draft.isNew && i>=0) active=i;
-    view='edit';
-  }
   let noteFilter = 'All';
   let noteSearch = '';
   let clipFilter = 'all';
   let clipSearch = '';
+  let screenFilter = 'all';
+  let screenSearch = '';
+  let curScreen = null;
 
-  function cur(){ return NOTES[active] || {name:'',title:'',body:''}; }
+  function cur(){ return (active<0 ? curRun : NOTES[active]) || {name:'',title:'',body:''}; }
+  function indexOf(name){ return NOTES.findIndex(function(n){return n.name===name;}); }
+  // ---------- commands from the app (window.__*) ----------
+  // Switch view for a fresh open of the popover. Lists are re-fetched lazily so they're always current.
+  function __show(cmd){
+    cmd=cmd||{}; clipsLoaded=false; screensLoaded=false; noteSearch=''; clipSearch=''; screenSearch='';
+    searchNames=null; draft=null; curRun=null; noteBack='home';
+    const v=cmd.view||'home';
+    if(v==='new'){ draft={name:'',body:'',isNew:true}; view='edit'; }
+    else if(v==='edit' && cmd.draft && cmd.draft.body!==undefined){
+      draft={name:cmd.draft.name||'', body:cmd.draft.body||'', isNew:!!cmd.draft.isNew};
+      const i=indexOf(draft.name); if(!draft.isNew && i>=0) active=i;
+      view='edit';
+    }
+    else if(v==='note' && cmd.name){ openNamed(cmd.name); return; }
+    else { view=v; if(view==='note' && !cur().name) view='home'; }
+    route();
+  }
+  // The app re-indexed the folder: swap in the new list, keep bodies we already hold, keep our place.
+  function __setNotes(list, changed){
+    const old={}; NOTES.forEach(function(n){ old[n.name]=n; });
+    const ch={}; (changed||[]).forEach(function(n){ ch[n]=1; });
+    const curName=cur().name;
+    NOTES=list.map(function(n){ const o=old[n.name]; if(o && o.body!==undefined && !ch[n.name]) n.body=o.body; return n; });
+    if(active>=0){ const i=indexOf(curName); active=i>=0?i:0; }
+    else if(curRun && ch[curRun.name]) { delete curRun.body; }
+    if(view==='home') route();
+    else if(view==='note'){ if(active>=0 && indexOf(curName)<0){ goHome(); } else if(cur().body===undefined) route(); }
+    // editing / clips / screens / runs: leave the screen alone
+  }
+  function __body(r){
+    const n = (active>=0 ? NOTES[indexOf(r.name)] : (curRun&&curRun.name===r.name?curRun:null)) || NOTES[indexOf(r.name)];
+    if(!n) return;
+    n.body=r.body; n.backlinks=r.backlinks||[];
+    if(view==='note' && cur().name===r.name) route();
+  }
+  function ensureBody(n){ if(!n||n.body!==undefined) return true; send('body',{name:n.name}); return false; }
+  // Open any note by file name — an ordinary note by index, or a run log as a detached entry.
+  function openNamed(name){
+    const i=indexOf(name);
+    if(i>=0){ openNote(i); return; }
+    curRun={name:name,title:name,body:undefined,run:true}; active=-1; noteBack='runs'; view='note'; route();
+  }
+  window.__show=__show; window.__setNotes=__setNotes; window.__body=__body;
   function send(action, extra){ try{ window.webkit.messageHandlers.bridge.postMessage(Object.assign({action:action}, extra||{})); }catch(e){} }
   function escHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
   function titleOf(body){ const m=stripFM(body).split('\n').find(l=>/^#\s/.test(l.trim())); return m?m.trim().replace(/^#\s+/,''):'Untitled'; }
@@ -226,6 +289,7 @@ let htmlTemplate = #"""
   // ---------- attachments + wiki links ----------
   function assetUrl(n){ return 'cherry://asset/'+encodeURIComponent(n); }
   function isImgName(n){ return /\.(png|jpe?g|gif|heic|webp|tiff?|bmp|svg)$/i.test(n); }
+  function isVidName(n){ return /\.(mp4|mov|m4v|webm|avi|mkv)$/i.test(n); }
   function noteIndexByRef(ref){
     const w=(ref||'').trim().toLowerCase();
     return NOTES.findIndex(n=>n.title.toLowerCase()===w||n.name.toLowerCase()===w);
@@ -245,6 +309,7 @@ let htmlTemplate = #"""
   function inl(s){ return s
     .replace(/`([^`]+)`/g,function(m,c){return '<code>'+c+'</code>';})
     .replace(/!\[([^\]]*)\]\(assets\/([^)]+)\)/g,function(m,alt,f){
+      if(isVidName(f)){ return '<video class="embinl" controls preload="metadata" src="'+assetUrl(f)+'"></video>'; }
       return '<img class="embinl" data-f="'+f+'" src="'+assetUrl(f)+'" onclick="send(\'open-asset\',{file:this.dataset.f})">'; })
     .replace(/!\[([^\]]*)\]\(([^)]+)\)/g,'<img class="embinl" src="$2">')
     .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
@@ -258,6 +323,9 @@ let htmlTemplate = #"""
     const f=m[2], label=m[1]||f, ef=escHtml(f);
     if(isImgName(f)){
       return '<div class="imgblock"><img data-f="'+ef+'" src="'+assetUrl(f)+'" onclick="send(\'open-asset\',{file:this.dataset.f})"></div>';
+    }
+    if(isVidName(f)){
+      return '<div class="imgblock"><video controls preload="metadata" src="'+assetUrl(f)+'"></video></div>';
     }
     const isPdf=/\.pdf$/i.test(f);
     let h='<div class="pdfblock"><div class="pdfhead">'+(isPdf?'📕':'📎')+' '+escHtml(label)+'<span class="spring"></span>'
@@ -293,10 +361,11 @@ let htmlTemplate = #"""
   const foot=()=>document.getElementById('foot');
 
   function goHome(){ view='home'; draft=null; route(); }
-  function openNote(i){ active=i; view='note'; route(); }
-  function openEdit(){ const n=cur(); draft={name:n.name, body:n.body, isNew:false}; view='edit'; route(); }
+  function goBack(){ if(noteBack==='runs'){ view='runs'; draft=null; route(); } else goHome(); }
+  function openNote(i){ active=i; curRun=null; noteBack='home'; view='note'; route(); }
+  function openEdit(){ const n=cur(); if(!ensureBody(n)) return; draft={name:n.name, body:n.body, isNew:false}; view='edit'; route(); }
   function addNote(){ draft={name:'', body:'', isNew:true}; view='edit'; route(); }
-  function cancelEdit(){ draft=null; send('draft-clear'); view = (NOTES.length? (cur().name?'note':'home'):'home'); route(); }
+  function cancelEdit(){ draft=null; send('draft-clear'); view = (cur().name?'note':'home'); route(); }
   function saveEdit(){
     let body=document.getElementById('ta').value;
     let name=draft.name;
@@ -307,10 +376,12 @@ let htmlTemplate = #"""
       // ensure the note opens with its name as an H1 title
       if(!/^#{1,6}\s/.test(body.trim())){ body='# '+title+(body.trim()?'\n\n'+body:'\n\n'); }
       name=uniqueSlug(title);
-      NOTES.push({name:name,title:titleOf(body),body:body}); active=NOTES.length-1;
+      NOTES.push({name:name,title:titleOf(body),body:body,preview:'',tags:[],category:'General',mtime:Date.now()/1000}); active=NOTES.length-1; curRun=null;
     } else {
       const title=titleOf(body);
-      const i=NOTES.findIndex(x=>x.name===name); if(i>=0){ NOTES[i].body=body; NOTES[i].title=title; active=i; }
+      const i=indexOf(name);
+      if(i>=0){ NOTES[i].body=body; NOTES[i].title=title; active=i; }
+      else if(curRun && curRun.name===name){ curRun.body=body; curRun.title=title; }
     }
     send('save',{name:name, body:body});
     draft=null; view='note'; route();
@@ -416,13 +487,16 @@ let htmlTemplate = #"""
     const ta=taEl(); if(!ta) return; const s=ta.selectionStart, e=ta.selectionEnd;
     const sel=ta.value.slice(s,e);
     if(sel){ surround('[[',']]'); return; }
-    const names=NOTES.map(function(n){return n.title;}).join(', ');
+    const names=NOTES.slice(0,40).map(function(n){return n.title;}).join(', ');
     const ref=prompt('Link to which note?'+(names?'\n('+names.slice(0,200)+(names.length>200?'…':'')+')':''),'');
     if(!ref) return;
     ta.setRangeText('[['+ref+']]', s, e, 'end'); ta.focus(); draftTick();
   }
   function delNote(){ const n=cur(); if(!confirm('Delete “'+n.title+'”? This removes the note and its Spotlight app.')) return;
-    send('delete',{name:n.name}); NOTES.splice(active,1); active=0; draft=null; view='home'; route(); }
+    send('delete',{name:n.name});
+    if(active>=0){ NOTES.splice(active,1); active=0; draft=null; view='home'; }
+    else { curRun=null; active=0; draft=null; view='runs'; runsCache=null; }
+    route(); }
 
   // ---------- clipboard ----------
   function showClips(){ view='clips'; route(); }
@@ -505,7 +579,7 @@ let htmlTemplate = #"""
   function renderClipList(){
     const cont=document.getElementById('cliplist'); if(!cont) return;
     const list=CLIPS.filter(c=>(clipFilter==='all'||(clipFilter==='fav'?c.fav:c.kind===clipFilter))&&clipMatches(c));
-    if(!list.length){ cont.innerHTML='<div class="empty">'+(clipSearch?'No matches.':'Nothing here yet.<br>Copy something and it shows up.')+'</div>'; return; }
+    if(!list.length){ cont.innerHTML='<div class="empty">'+(!clipsLoaded?'…':clipSearch?'No matches.':'Nothing here yet.<br>Copy something and it shows up.')+'</div>'; return; }
     let html='', lastDay='';
     list.forEach(function(c){
       const dk=dayKey(c.ts);
@@ -516,6 +590,54 @@ let htmlTemplate = #"""
         +'<span class="x" onclick="delClip(\''+c.id+'\',event)">×</span></div>';
     });
     cont.innerHTML=html;
+  }
+
+  // ---------- screen captures ----------
+  function showScreens(){ view='screens'; route(); }
+  function screenIcon(c){ return (c&&c.kind==='video')?'🎬':'🖼'; }
+  function curScreenItem(){ return SCREENS.find(function(s){return s.id===curScreen;}) || null; }
+  function openScreen(id){ curScreen=id; view='screen'; route(); }
+  function screenMatches(c){
+    const q=screenSearch.trim().toLowerCase(); if(!q) return true;
+    return ((c.name||'')+' '+(c.note||'')+' '+c.kind).toLowerCase().indexOf(q)>=0;
+  }
+  function screenInner(c){
+    if(c.thumb){ return '<div class="shotthumb"><img class="thumb" src="'+c.thumb+'">'+(c.kind==='video'?'<span class="playbadge">▶</span>':'')+'</div>'; }
+    return '<div class="ficon">'+screenIcon(c)+'</div>';
+  }
+  function delScreen(id,ev){ ev.stopPropagation();
+    if(!confirm('Remove this capture from Cherry? The file itself stays on disk.')) return;
+    send('screen-delete',{id:id}); SCREENS=SCREENS.filter(function(s){return s.id!==id;}); renderScreenList(); }
+  function screenAct(ev,id,action,msg){ ev.stopPropagation(); send(action,{id:id});
+    const c=SCREENS.find(function(s){return s.id===id;});
+    showToast(c&&c.thumb?'<img class="thumb" src="'+c.thumb+'">':screenIcon(c), msg, (c&&c.name)||''); }
+  function renderScreenList(){
+    const cont=document.getElementById('screenlist'); if(!cont) return;
+    const list=SCREENS.filter(function(c){ return (screenFilter==='all'||c.kind===screenFilter) && screenMatches(c); });
+    if(!list.length){ cont.innerHTML='<div class="empty">'+(!screensLoaded?'…':screenSearch?'No matches.':'Nothing here yet.<br>Take a screenshot (⌘⇧4) or record your screen (⌘⇧5) and it lands here.')+'</div>'; return; }
+    let html='', lastDay='';
+    list.forEach(function(c){
+      const dk=dayKey(c.ts);
+      if(dk!==lastDay){ html+='<div class="daterow">'+escHtml(dk)+'</div>'; lastDay=dk; }
+      const noteLine=c.note?'<div class="cmeta snote">📝 '+escHtml(c.note)+'</div>':'';
+      html+='<div class="clip" onclick="openScreen(\''+c.id+'\')">'
+        +screenInner(c)+'<div class="cbody">'
+        +'<span class="badge '+c.kind+'">'+(c.kind==='video'?'Recording':'Screenshot')+'</span>'
+        +'<div class="prev">'+escHtml(c.name||'')+'</div>'+noteLine
+        +'<div class="cacts">'
+          +'<button onclick="screenAct(event,\''+c.id+'\',\'screen-open\',\'Opening…\')">Open</button>'
+          +'<button onclick="screenAct(event,\''+c.id+'\',\'screen-reveal\',\'Showing in Finder\')">Reveal</button>'
+          +'<button onclick="screenAct(event,\''+c.id+'\',\'screen-copy-file\',\'File copied — paste anywhere\')">Copy</button>'
+        +'</div><div class="cmeta">'+timeStr(c.ts)+'</div></div>'
+        +'<span class="x" onclick="delScreen(\''+c.id+'\',event)">×</span></div>';
+    });
+    cont.innerHTML=html;
+  }
+  function saveScreenNote(){
+    const c=curScreenItem(); if(!c){ showScreens(); return; }
+    const ta=document.getElementById('snote'); const val=ta?ta.value:'';
+    c.note=val; send('screen-note',{id:c.id,note:val});
+    showToast('📝','Note saved',c.name||''); showScreens();
   }
 
   // ---------- notes home list (category + text search) ----------
@@ -529,11 +651,27 @@ let htmlTemplate = #"""
     let h=0; for(let i=0;i<c.length;i++){ h=(h*31+c.charCodeAt(i))>>>0; }
     return CAT_PALETTE[h%CAT_PALETTE.length];
   }
+  // Search: title / category / tags / preview match instantly here; the app answers full-text
+  // matches through __searchResult() (debounced) and the list re-renders when they land.
+  let searchNames=null, searchT=null, searchFor='';
   function noteMatches(n){
     const q=noteSearch.trim().toLowerCase(); if(!q) return true;
-    const hay=((n.title||'')+' '+(n.category||'')+' '+((n.tags||[]).join(' '))+' '+stripFM(n.body||'')).toLowerCase();
-    return hay.indexOf(q)>=0;
+    const hay=((n.title||'')+' '+(n.category||'')+' '+((n.tags||[]).join(' '))+' '+(n.preview||'')).toLowerCase();
+    if(hay.indexOf(q)>=0) return true;
+    return !!(searchNames && searchFor===q && searchNames[n.name]);
   }
+  function noteSearchInput(v){
+    noteSearch=v; renderNoteList();
+    if(searchT) clearTimeout(searchT);
+    const q=v.trim(); if(!q){ searchNames=null; return; }
+    searchT=setTimeout(function(){ send('search',{q:q}); },120);
+  }
+  function __searchResult(r){
+    if((r.q||'').trim().toLowerCase()!==noteSearch.trim().toLowerCase()) return;
+    searchFor=(r.q||'').trim().toLowerCase(); searchNames={}; (r.names||[]).forEach(function(n){ searchNames[n]=1; });
+    if(view==='home') renderNoteList();
+  }
+  window.__searchResult=__searchResult;
   function renderNoteList(){
     const cont=document.getElementById('notelist'); if(!cont) return;
     const rows=NOTES.map(function(n,idx){ return {n:n,idx:idx}; })
@@ -543,7 +681,7 @@ let htmlTemplate = #"""
         const tags=(n.tags&&n.tags.length)?'<div class="tags">'+n.tags.slice(0,4).map(function(t){return '<span class="tag" style="color:'+col+';border-color:'+col+'40">'+escHtml(t)+'</span>';}).join('')+'</div>':'';
         const pill='<div class="cat" style="color:'+col+';border-color:'+col+'66">'+escHtml(n.category||'General')+'</div>';
         return '<div class="row" onclick="openNote('+o.idx+')"><div class="ic" style="color:'+col+'">'+(n.pinned?'📌':(n.name==='email'?'✉️':'🗄️'))+'</div>'
-          +'<div class="tx"><div class="tt">'+escHtml(n.title)+'</div><div class="pv">'+escHtml(firstText(n.body))+'</div>'+tags+'</div>'
+          +'<div class="tx"><div class="tt">'+escHtml(n.title)+'</div><div class="pv">'+escHtml(n.preview!==undefined?n.preview:firstText(n.body))+'</div>'+tags+'</div>'
           +((noteFilter==='All'&&!noteSearch)?pill:'')
           +(n.mtime?'<div class="when">'+agoStr(n.mtime)+'</div>':'')
           +'<div class="chev">›</div></div>';
@@ -551,30 +689,96 @@ let htmlTemplate = #"""
     cont.innerHTML = rows || '<div class="empty">'+(noteSearch?'No notes match “'+escHtml(noteSearch)+'”.':'Nothing in “'+escHtml(noteFilter)+'”.')+'</div>';
   }
 
+  function __clips(list){ CLIPS=list||[]; clipsLoaded=true; if(view==='clips') route(); }
+  function __screens(list){ SCREENS=list||[]; screensLoaded=true; if(view==='screens'||view==='screen') route(); }
+  window.__clips=__clips; window.__screens=__screens;
+
+  // ---------- run logs (paged in from the app, 40 at a time) ----------
+  const RUN_PAGE=40;
+  let runsCache=null, runAgent='', runSearch='', runsT=null, runsLoading=false;
+  function showRuns(){ view='runs'; route(); }
+  function fetchRuns(offset){
+    runsLoading=true;
+    send('runs',{agent:runAgent, q:runSearch.trim(), offset:offset||0, limit:RUN_PAGE});
+  }
+  function __runsPage(r){
+    runsLoading=false;
+    if(r.agent!==runAgent || (r.q||'')!==runSearch.trim()) return;   // stale answer
+    if(r.offset>0 && runsCache && runsCache.agent===r.agent && runsCache.q===r.q){ runsCache.items=runsCache.items.concat(r.items||[]); runsCache.total=r.total; runsCache.groups=r.groups; }
+    else runsCache={agent:r.agent, q:r.q, items:r.items||[], total:r.total, all:r.all, groups:r.groups||[]};
+    if(view==='runs') route();
+  }
+  window.__runsPage=__runsPage;
+  function runSearchInput(v){
+    runSearch=v; if(runsT) clearTimeout(runsT);
+    runsT=setTimeout(function(){ runsCache=null; fetchRuns(0); route(); },150);
+  }
+  function setRunAgent(a){ runAgent=a; runsCache=null; fetchRuns(0); route(); }
+  function moreRuns(){ if(runsCache && !runsLoading) fetchRuns(runsCache.items.length); }
+  function openRun(name){
+    const it=runsCache && runsCache.items.find(function(x){return x.name===name;});
+    curRun=it||{name:name,title:name,run:true}; active=-1; noteBack='runs'; view='note'; route();
+  }
+  function shortAgent(a){ return a.replace(/[-_]+/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}); }
+  function renderRunsView(){
+    const c=runsCache;
+    const need=!c || c.agent!==runAgent || c.q!==runSearch.trim();
+    if(need && !runsLoading) fetchRuns(0);
+    const groups=(c&&c.groups)||[];
+    const chips='<div class="chip'+(runAgent===''?' active':'')+'" onclick="setRunAgent(\'\')">All'+(c?' <span class="cc">'+c.all+'</span>':'')+'</div>'
+      +groups.map(function(g){ return '<div class="chip'+(runAgent===g.agent?' active':'')+'" data-a="'+escHtml(g.agent)+'" onclick="setRunAgent(this.dataset.a)">'
+        +escHtml(shortAgent(g.agent))+' <span class="cc">'+g.count+'</span></div>'; }).join('');
+    let rows='';
+    if(!c || need) rows='<div class="empty loading">…</div>';
+    else if(!c.items.length) rows='<div class="empty">'+(runSearch?'No runs match.':'No run logs yet.')+'</div>';
+    else {
+      rows=c.items.map(function(n){ return '<div class="row run" data-n="'+escHtml(n.name)+'" onclick="openRun(this.dataset.n)"><div class="ic">⚙️</div>'
+        +'<div class="tx"><div class="tt">'+escHtml(n.title)+'</div><div class="pv">'+escHtml(n.preview||'')+'</div></div>'
+        +(n.mtime?'<div class="when">'+agoStr(n.mtime)+'</div>':'')+'<div class="chev">›</div></div>'; }).join('');
+      if(c.items.length<c.total) rows+='<div class="more" onclick="moreRuns()">'+(runsLoading?'Loading…':'Show more · '+(c.total-c.items.length)+' left')+'</div>';
+    }
+    appEl().className='';
+    appEl().innerHTML='<div class="chips ntop">'+chips+'</div>'
+      +'<input class="search" id="runq" type="search" placeholder="Search run logs…" oninput="runSearchInput(this.value)" value="'+escHtml(runSearch)+'">'
+      +'<div class="list" id="runlist">'+rows+'</div>';
+    const q=document.getElementById('runq'); if(runSearch&&q){ q.focus(); q.setSelectionRange(q.value.length,q.value.length); }
+  }
+
   function route(){
-    if(view==='home'){
+    if(view==='runs'){
+      bar().innerHTML='<button class="nav l" onclick="goHome()">‹ Notes</button>'
+        +'<div class="mid">⚙️ Run logs</div><span class="spring"></span>';
+      renderRunsView();
+      foot().innerHTML='<button class="btn mut" onclick="send(\'reveal\')">Folder</button>'
+        +'<span class="spring"></span><button class="btn mut" onclick="send(\'quit\')">Quit</button>';
+    }
+    else if(view==='home'){
       bar().innerHTML='<button class="nav l" title="Clipboard" onclick="showClips()">📋 Clipboard</button>'
+        +'<button class="nav l" title="Screen captures" onclick="showScreens()">🖼 Screen</button>'
         +'<div class="mid">🍒 Cherry</div><span class="spring"></span>'
+        +'<button class="plus" title="Open full app (or double-click the bar)" onclick="send(\'open-app\')" style="font-size:15px;margin-right:2px">⤢</button>'
         +'<button class="plus" title="New note" onclick="addNote()">+</button>';
       appEl().className='';
-      if(!NOTES.length){ appEl().innerHTML='<div class="empty">No notes yet.<br>Tap + to add one.</div>'; }
+      if(!NOTES.length){ appEl().innerHTML='<div class="empty">No notes yet.<br>Tap + to add one.</div>'
+          +'<div class="chips ntop"><div class="chip runchip" onclick="showRuns()">⚙️ Run logs</div></div>'; }
       else {
         // category chips (built from the notes; "All" first, then categories in first-seen order)
-        const cats=['All'];
-        NOTES.forEach(function(n){ const c=(n.category||'General'); if(cats.indexOf(c)<0) cats.push(c); });
+        const cats=['All'], counts={};
+        NOTES.forEach(function(n){ const c=(n.category||'General'); if(counts[c]===undefined){ counts[c]=0; cats.push(c); } counts[c]++; });
         if(cats.indexOf(noteFilter)<0) noteFilter='All';
         window.__cats=cats;
         const chips=cats.map(function(c,i){
-          const cnt=(c==='All')?NOTES.length:NOTES.filter(function(n){return (n.category||'General')===c;}).length;
+          const cnt=(c==='All')?NOTES.length:counts[c];
           const on=(noteFilter===c), isAll=(c==='All'), col=catColor(c);
           let style='', dot='';
           if(!isAll){ if(on){ style=' style="background:'+col+';border-color:'+col+';color:#fff"'; }
                       else { style=' style="border-color:'+col+'66"'; dot='<span class="cdot" style="background:'+col+'"></span>'; } }
           return '<div class="chip'+(on?' active':'')+'"'+style+' onclick="noteFilter=window.__cats['+i+'];noteSearch=\'\';route()">'
-            +dot+escHtml(c)+' <span class="cc">'+cnt+'</span></div>'; }).join('');
+            +dot+escHtml(c)+' <span class="cc">'+cnt+'</span></div>'; }).join('')
+          +'<div class="chip runchip" title="Automation run logs — kept apart from your notes" onclick="showRuns()">⚙️ Runs</div>';
         appEl().innerHTML='<div class="chips ntop">'+chips+'</div>'
           +'<input class="search" id="noteq" type="search" placeholder="Search notes — title, tag, text…" '
-          +'oninput="noteSearch=this.value;renderNoteList()" value="'+escHtml(noteSearch)+'">'
+          +'oninput="noteSearchInput(this.value)" value="'+escHtml(noteSearch)+'">'
           +'<div class="list" id="notelist"></div>';
         renderNoteList();
         const q=document.getElementById('noteq'); if(noteSearch&&q){ q.focus(); q.setSelectionRange(q.value.length,q.value.length); }
@@ -584,18 +788,18 @@ let htmlTemplate = #"""
     }
     else if(view==='note'){
       const n=cur();
-      bar().innerHTML='<button class="nav l" onclick="goHome()">‹ Notes</button>'
-        +'<div class="mid">'+(n.pinned?'📌 ':'')+escHtml(n.title)+'</div>'
+      if(n.run && n.body!==undefined && n.title===n.name) n.title=titleOf(n.body);
+      bar().innerHTML='<button class="nav l" onclick="goBack()">‹ '+(noteBack==='runs'?'Runs':'Notes')+'</button>'
+        +'<div class="mid">'+(n.pinned?'📌 ':'')+escHtml(n.title)+'</div><span class="spring"></span>'
+        +'<button class="plus" title="Open this note in the full app" onclick="send(\'open-note\',{name:cur().name})" style="font-size:15px;margin-right:2px">⤢</button>'
         +'<button class="nav r strong" onclick="openEdit()">Edit</button>';
-      // backlinks — every other note whose body wiki-links [[here]]
-      const refs=NOTES.map(function(o,idx){return {o:o,idx:idx};}).filter(function(x){
-        if(x.o.name===n.name) return false;
-        const b=(x.o.body||'').toLowerCase();
-        return b.indexOf('[['+n.title.toLowerCase()+']]')>=0 || b.indexOf('[['+n.name.toLowerCase()+']]')>=0;
-      });
+      appEl().className='pad';
+      if(!ensureBody(n)){ appEl().innerHTML='<div class="empty loading">…</div>'; foot().innerHTML=''; return; }
+      // backlinks — every other note whose body wiki-links [[here]] (computed by the app)
+      const refs=n.backlinks||[];
       const bl=refs.length?'<div class="backlinks"><div class="bt">Linked from</div>'
-        +refs.map(function(x){return '<a class="wl" onclick="openNote('+x.idx+')">'+escHtml(x.o.title)+'</a>';}).join('')+'</div>':'';
-      appEl().className='pad'; appEl().innerHTML=md(stripFM(n.body))+bl; appEl().scrollTop=0;
+        +refs.map(function(x){return '<a class="wl" data-n="'+escHtml(x.name)+'" onclick="openNamed(this.dataset.n)">'+escHtml(x.title)+'</a>';}).join('')+'</div>':'';
+      appEl().innerHTML=md(stripFM(n.body))+bl; appEl().scrollTop=0;
       foot().innerHTML='<button class="btn" onclick="send(\'copy\',{text:stripFM(cur().body)});showToast(\'📋\',\'Copied\',cur().title)">Copy</button>'
         +'<button class="btn" onclick="togglePin()">'+(n.pinned?'Unpin':'Pin')+'</button>'
         +'<button class="btn" onclick="send(\'export-pdf\',{name:cur().title})">PDF</button>'
@@ -645,6 +849,7 @@ let htmlTemplate = #"""
         +'<div class="mid">Clipboard</div>'
         +'<button class="nav r mut" onclick="clearClips()">Clear</button>';
       appEl().className='';
+      if(!clipsLoaded){ send('clips'); }
       const present={}; CLIPS.forEach(c=>present[c.kind]=1);
       const chips=KINDS.filter(k=>k[0]==='all'||k[0]==='fav'||present[k[0]]).map(function(k){
         return '<div class="chip'+(clipFilter===k[0]?' active':'')+'" onclick="clipFilter=\''+k[0]+'\';route()">'+escHtml(k[1])+'</div>'; }).join('');
@@ -659,6 +864,48 @@ let htmlTemplate = #"""
         +'<span class="spring"></span><span class="btn mut" style="cursor:default">'+CLIPS.length+' items</span>'
         +'<button class="btn mut" onclick="send(\'quit\')">Quit</button>';
     }
+    else if(view==='screens'){
+      bar().innerHTML='<button class="nav l" onclick="goHome()">‹ Notes</button>'
+        +'<div class="mid">Screen</div>'
+        +'<button class="nav r mut" onclick="showClips()">Clipboard</button>';
+      appEl().className='';
+      if(!screensLoaded){ send('screens'); }
+      const present={}; SCREENS.forEach(function(c){present[c.kind]=1;});
+      const kinds=[['all','All'],['image','Screenshots'],['video','Recordings']];
+      const chips=kinds.filter(function(k){return k[0]==='all'||present[k[0]];}).map(function(k){
+        return '<div class="chip'+(screenFilter===k[0]?' active':'')+'" onclick="screenFilter=\''+k[0]+'\';route()">'+escHtml(k[1])+'</div>'; }).join('');
+      appEl().innerHTML='<div class="chips">'+chips+'</div>'
+        +'<input class="search" id="screenq" type="search" placeholder="Search captures — name, note…" '
+        +'oninput="screenSearch=this.value;renderScreenList()" value="'+escHtml(screenSearch)+'">'
+        +'<div id="screenlist"></div>';
+      renderScreenList();
+      const q=document.getElementById('screenq'); if(screenSearch){ q.focus(); q.setSelectionRange(q.value.length,q.value.length); }
+      appEl().scrollTop=0;
+      foot().innerHTML='<button class="btn mut" onclick="goHome()">‹ Notes</button>'
+        +'<span class="spring"></span><span class="btn mut" style="cursor:default">'+SCREENS.length+' items</span>'
+        +'<button class="btn mut" onclick="send(\'quit\')">Quit</button>';
+    }
+    else if(view==='screen'){
+      const c=curScreenItem();
+      if(!c){ showScreens(); return; }
+      bar().innerHTML='<button class="nav l" onclick="showScreens()">‹ Screen</button>'
+        +'<div class="mid">'+escHtml(c.name||'Capture')+'</div>'
+        +'<button class="nav r strong" onclick="saveScreenNote()">Save</button>';
+      appEl().className='pad';
+      const media=(c.kind==='video')
+        ? '<div class="imgblock shot vid" onclick="send(\'screen-open\',{id:curScreen})">'+(c.thumb?'<img src="'+c.thumb+'">':'')+'<span class="playbadge big">▶</span></div>'
+        : '<div class="imgblock shot"><img src="cherry://screen/'+encodeURIComponent(c.id)+'"></div>';
+      appEl().innerHTML=media
+        +'<div class="snotebox"><div class="snotelbl">Note</div><textarea id="snote" spellcheck="false" placeholder="Write a note about this capture… (⌘S to save)">'+escHtml(c.note||'')+'</textarea></div>';
+      appEl().scrollTop=0;
+      const ta=document.getElementById('snote');
+      if(ta){ ta.focus(); ta.setSelectionRange(ta.value.length,ta.value.length);
+        ta.addEventListener('keydown',function(ev){ if((ev.metaKey||ev.ctrlKey)&&(ev.key||'').toLowerCase()==='s'){ ev.preventDefault(); saveScreenNote(); } }); }
+      foot().innerHTML='<button class="btn" onclick="send(\'screen-open\',{id:curScreen});showToast(\'🖼\',\'Opening…\',(curScreenItem()||{}).name||\'\')">Open</button>'
+        +'<button class="btn" onclick="send(\'screen-reveal\',{id:curScreen});showToast(\'📂\',\'Showing in Finder\',(curScreenItem()||{}).name||\'\')">Reveal in Finder</button>'
+        +'<button class="btn" onclick="send(\'screen-copy-file\',{id:curScreen});showToast(\'📋\',\'File copied\',(curScreenItem()||{}).name||\'\')">Copy File</button>'
+        +'<span class="spring"></span><button class="btn mut" onclick="send(\'quit\')">Quit</button>';
+    }
   }
   // ---------- keyboard shortcuts ----------
   document.addEventListener('keydown',function(ev){
@@ -666,15 +913,20 @@ let htmlTemplate = #"""
     if((ev.metaKey||ev.ctrlKey)&&!ev.shiftKey&&!ev.altKey){
       if(k==='n'&&view!=='edit'){ ev.preventDefault(); addNote(); }
       else if(k==='f'){
-        if(view==='home'||view==='clips'){ ev.preventDefault();
-          const q=document.getElementById(view==='home'?'noteq':'clipq'); if(q) q.focus(); }
+        if(view==='home'||view==='clips'||view==='screens'){ ev.preventDefault();
+          const id=view==='home'?'noteq':(view==='clips'?'clipq':'screenq');
+          const q=document.getElementById(id); if(q) q.focus(); }
       }
     } else if(k==='escape'){
-      if(view==='note'){ ev.preventDefault(); goHome(); }
+      if(view==='note'){ ev.preventDefault(); goBack(); }
+      else if(view==='runs'){ ev.preventDefault(); goHome(); }
       else if(view==='clips'){ ev.preventDefault(); goHome(); }
+      else if(view==='screens'){ ev.preventDefault(); goHome(); }
+      else if(view==='screen'){ ev.preventDefault(); showScreens(); }
       // in the editor Esc is left alone — drafts are preserved anyway
     }
   });
   route();
+  send('ready');   // the app queues its first __show() until this arrives
 </script></body></html>
 """#

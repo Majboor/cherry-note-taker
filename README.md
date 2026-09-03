@@ -7,7 +7,7 @@
 Markdown notes, Spotlight launchers, CherryTree export, and a clipboard history that
 auto-sorts everything you copy — in ~300 lines of dependency-free Swift.
 
-![version](https://img.shields.io/badge/version-1.6.0-2563eb)
+![version](https://img.shields.io/badge/version-1.8.0-2563eb)
 ![platform](https://img.shields.io/badge/macOS-11%2B-lightgrey?logo=apple)
 ![Swift](https://img.shields.io/badge/Swift-5-f05138?logo=swift&logoColor=white)
 ![license](https://img.shields.io/badge/license-MIT-22c55e)
@@ -29,7 +29,10 @@ auto-sorts everything you copy — in ~300 lines of dependency-free Swift.
 - 🔗 **Wiki-links & backlinks** — `[[Note Title]]` jumps between notes; a **Linked from** section shows what points here.
 - 📌 **Pinned notes, recency sort & drafts that survive** — close the popover mid-edit and pick up where you left off.
 - 🔎 **Spotlight launchers** — every note gets its own app; ⌘-Space → type its name → jump straight to it. Or hit **⌃⌥⌘C** anywhere.
+- ⚙️ **Run logs, kept apart** — notes agents write as `*-run-<timestamp>` stay out of your list and Spotlight; a **Runs** chip pages them in per agent, 40 at a time.
+- ⚡ **Instant at any size** — the folder is indexed once and watched for changes; bodies, run logs, clipboard and screen lists load only when you open them.
 - 📋 **Clipboard history** — everything you copy, auto-sorted by **type** and **date**, with search & favourites; file clips get **Copy Path / Copy File / Open / Reveal**.
+- 🖼 **Screen tab** — screenshots & screen recordings land here automatically; click one to **write a note** on it, **Reveal in Finder**, Open, or Copy File. Cherry never moves the file.
 - 🔊 **Adaptive capture sound** — a soft pop on copy that fades when you re-copy the same thing and resets for new content.
 - 🌳 **CherryTree export**, one-click **Copy**, and **Export as PDF**.
 - 🪶 **No lock-in, no dependencies** — notes are just files in a folder you choose; pure AppKit + WebKit.

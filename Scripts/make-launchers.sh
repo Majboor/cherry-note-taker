@@ -15,19 +15,31 @@ for app in "$APPS"/*\ Handover.app; do
   [ -e "$app" ] || continue
   id=$(/usr/bin/defaults read "$app/Contents/Info" CFBundleIdentifier 2>/dev/null || true)
   case "$id" in
-    com.hico.nasnote.*) base="${id#com.hico.nasnote.}"; [ -f "$NOTES/$base.md" ] || { rm -rf "$app"; echo "pruned: $(basename "$app")"; } ;;
+    com.hico.nasnote.*) base="${id#com.hico.nasnote.}";
+      # Timestamped automation run logs stay searchable in CherryTree but get no Spotlight app.
+      case "$base" in *-run-[0-9]*) rm -rf "$app"; echo "pruned run log: $(basename "$app")"; continue ;; esac
+      if [ ! -f "$NOTES/$base.md" ] || head -20 "$NOTES/$base.md" | grep -qE '^parent:[[:space:]]'; then rm -rf "$app"; echo "pruned: $(basename "$app")"; fi ;;
   esac
 done
 
+built=0; kept=0
 for md in "$NOTES"/*.md; do
   [ -e "$md" ] || continue
   base=$(basename "$md" .md)
+  case "$base" in *-run-[0-9]*) continue ;; esac  # run logs live in the Runs tab, not Spotlight
+  head -20 "$md" | grep -qE '^parent:[[:space:]]' && continue   # sub-notes are reached via the tree, no launcher
   title=$(grep -m1 '^# ' "$md" | sed 's/^# //' || true)
   [ -z "$title" ] && title="$base"
   disp="$(cap "$title") Handover"
   disp=$(printf '%s' "$disp" | tr '/:' '--')  # "/" in a title would nest the .app path; ":" is Finder's separator
   app="$APPS/$disp.app"
   xdisp=$(xesc "$disp")
+  # Already built for this note under this name? Leave it alone — rebuilding + re-signing every
+  # launcher on every save was the disk thrash behind the "glitchy while typing" feeling.
+  if [ -x "$app/Contents/MacOS/launch" ] && grep -qF "nasnote://$base\"" "$app/Contents/MacOS/launch"; then
+    kept=$((kept + 1)); continue
+  fi
+  built=$((built + 1))
   rm -rf "$app"; mkdir -p "$app/Contents/MacOS"
   cat > "$app/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -48,5 +60,5 @@ EOF
   "$LSREG" -f "$app" >/dev/null 2>&1 || true
   echo "built: $disp.app  ->  nasnote://$base"
 done
-mdimport "$APPS" >/dev/null 2>&1 || true
-echo "done."
+[ "$built" -gt 0 ] && mdimport "$APPS" >/dev/null 2>&1 || true
+echo "done. built $built, unchanged $kept."

@@ -3,6 +3,21 @@
 # Called by the NAS Notes app after a save/delete, and safe to run by hand.
 NOTES="${NAS_NOTES_DIR:-$HOME/.rpidrive/notes}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
+LOCK_DIR="$NOTES/.rebuild.lock"
+
+# Several scheduled agents may finish together.  Launcher generation replaces
+# shared .app bundles, so serialize the complete rebuild to prevent colliding
+# rm/mkdir operations from leaving a partial bundle behind.
+waited=0
+until mkdir "$LOCK_DIR" 2>/dev/null; do
+  if [ "$waited" -ge 60 ]; then
+    echo "Timed out waiting for the NAS notes rebuild lock." >&2
+    exit 1
+  fi
+  sleep 1
+  waited=$((waited + 1))
+done
+trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
 
 # 1) CherryTree document (NAS.ctd) — NAS & email first (if present), then others alphabetically
 NAS_NOTES_DIR="$NOTES" /usr/bin/python3 - <<'PY'

@@ -80,18 +80,17 @@ final class Snapper: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                        styleMask: .borderless, backing: .buffered, defer: false)
         win.contentView = web; win.alphaValue = 0.0
         win.orderFrontRegardless()
-        let (view, active, _, _) = spec()
-        let html = htmlTemplate
-            .replacingOccurrences(of: "/*__NOTES__*/", with: jstr(notes()))
-            .replacingOccurrences(of: "/*__CLIPS__*/", with: jstr(clips()))
-            .replacingOccurrences(of: "/*__VIEW__*/", with: view)
-            .replacingOccurrences(of: "/*__ACTIVE__*/", with: String(active))
+        // The page now boots on a slim index and asks the app for everything else; here we
+        // hand it the sample notes (bodies attached, so no fetch) and the sample clips directly.
+        let html = htmlTemplate.replacingOccurrences(of: "/*__NOTES__*/", with: jstr(notes()))
         web.loadHTMLString(html, baseURL: nil)
     }
     func webView(_ w: WKWebView, didFinish nav: WKNavigation!) {
-        let (_, _, postJS, _) = spec()
+        let (view, active, postJS, _) = spec()
+        let boot = "__clips(\(jstr(clips())));__screens([]);"
+            + (view == "note" ? "__show({view:'home'});openNote(\(active));" : "__show({view:'\(view)'});")
         let run = { (then: @escaping () -> Void) in
-            if postJS.isEmpty { then() } else { w.evaluateJavaScript(postJS) { _, _ in then() } }
+            w.evaluateJavaScript(boot + postJS) { _, _ in then() }
         }
         run {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {

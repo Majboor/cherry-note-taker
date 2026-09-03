@@ -14,15 +14,38 @@ let CTD = NOTES_DIR + "/NAS.ctd"
 let CHERRYTREE = "/opt/homebrew/bin/cherrytree"
 
 struct Note { let name: String; let title: String; let category: String; let tags: [String]
-              let body: String; let mtime: Double; let pinned: Bool }
+              let body: String; let mtime: Double; let pinned: Bool; let parent: String? }
 
 // Serves note attachments to the WebView as cherry://asset/<name> — loadHTMLString
 // pages can't read file:// URLs, so embedded images/PDFs go through this handler.
 final class AssetSchemeHandler: NSObject, WKURLSchemeHandler {
+    weak var clips: ClipStore?
+    init(clips: ClipStore) { self.clips = clips }
     func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
         guard let url = task.request.url,
               let name = url.path.removingPercentEncoding?.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
               !name.isEmpty else { fail(task); return }
+        // cherry://cthumb/<id> and cherry://sthumb/<id> → clipboard / screen-capture thumbnails.
+        // They used to ride inline in the page as base64 (≈2.7 MB per open); now the page only
+        // carries ids and the browser pulls each thumbnail when it scrolls into view.
+        if url.host == "cthumb" || url.host == "sthumb" {
+            let items = url.host == "cthumb" ? (clips?.items ?? []) : ScreenStore.shared.items
+            guard let it = items.first(where: { ($0["id"] as? String) == name }),
+                  let uri = it["thumb"] as? String, let comma = uri.firstIndex(of: ","),
+                  let data = Data(base64Encoded: String(uri[uri.index(after: comma)...])) else { fail(task); return }
+            let mime = uri.hasPrefix("data:image/jpeg") ? "image/jpeg" : "image/png"
+            let resp = URLResponse(url: url, mimeType: mime, expectedContentLength: data.count, textEncodingName: nil)
+            task.didReceive(resp); task.didReceive(data); task.didFinish(); return
+        }
+        // cherry://screen/<id> → stream a captured screenshot/recording by id (path validated against the store)
+        if url.host == "screen" {
+            guard let path = ScreenStore.shared.path(name),
+                  let data = FileManager.default.contents(atPath: path) else { fail(task); return }
+            let ext = (path as NSString).pathExtension.lowercased()
+            let mime = UTType(filenameExtension: ext)?.preferredMIMEType ?? "application/octet-stream"
+            let resp = URLResponse(url: url, mimeType: mime, expectedContentLength: data.count, textEncodingName: nil)
+            task.didReceive(resp); task.didReceive(data); task.didFinish(); return
+        }
         let path = (ASSETS_DIR as NSString).appendingPathComponent(name)
         // never serve anything outside the assets folder
         let canonical = (path as NSString).standardizingPath
@@ -40,10 +63,10 @@ final class AssetSchemeHandler: NSObject, WKURLSchemeHandler {
 // Parse an optional YAML-ish frontmatter block (--- … ---) at the very top of a note.
 // Returns the category (default "General") and tags. The body is kept intact for round-trip editing;
 // the UI hides the frontmatter when rendering.
-func parseFrontmatter(_ body: String) -> (category: String, tags: [String], pinned: Bool) {
-    var category = "General"; var tags: [String] = []; var pinned = false
+func parseFrontmatter(_ body: String) -> (category: String, tags: [String], pinned: Bool, parent: String?) {
+    var category = "General"; var tags: [String] = []; var pinned = false; var parent: String? = nil
     let lines = body.components(separatedBy: "\n")
-    guard let first = lines.first, first.trimmingCharacters(in: .whitespaces) == "---" else { return (category, tags, pinned) }
+    guard let first = lines.first, first.trimmingCharacters(in: .whitespaces) == "---" else { return (category, tags, pinned, parent) }
     var i = 1
     while i < lines.count && lines[i].trimmingCharacters(in: .whitespaces) != "---" {
         let parts = lines[i].split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
@@ -53,56 +76,76 @@ func parseFrontmatter(_ body: String) -> (category: String, tags: [String], pinn
             if key == "category", !val.isEmpty { category = val }
             if key == "tags" { tags = val.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
             if key == "pinned" { pinned = ["true","yes","1"].contains(val.lowercased()) }
+            if key == "parent", !val.isEmpty { parent = val }
         }
         i += 1
     }
-    return (category, tags, pinned)
+    return (category, tags, pinned, parent)
 }
 
+// Ordinary notes (run logs excluded) in display order, served from the in-memory store after a
+// cheap incremental refresh. Callers that just need the cached list should use NoteStore directly.
 func loadNotes() -> [Note] {
-    let fm = FileManager.default
-    let preferred = ["NAS", "email"]
-    let files = ((try? fm.contentsOfDirectory(atPath: NOTES_DIR)) ?? []).filter { $0.hasSuffix(".md") }
-    func loadOne(_ base: String) -> Note? {
-        let path = NOTES_DIR + "/" + base + ".md"
-        guard let body = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
-        var title = base
-        for raw in body.split(separator: "\n") {
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            if line.hasPrefix("# ") { title = String(line.dropFirst(2)); break }
-        }
-        let (category, tags, pinned) = parseFrontmatter(body)
-        let mtime = ((try? fm.attributesOfItem(atPath: path))?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-        return Note(name: base, title: title, category: category, tags: tags, body: body, mtime: mtime, pinned: pinned)
-    }
-    var notes: [Note] = []; var used = Set<String>()
-    for base in preferred where files.contains(base + ".md") {
-        if let n = loadOne(base) { notes.append(n); used.insert(base + ".md") }
-    }
-    for f in files.sorted() where !used.contains(f) {
-        if let n = loadOne(String(f.dropLast(3))) { notes.append(n) }
-    }
-    // Pinned first; then the preferred/alphabetical base order gives way to recency.
-    let pinnedNotes = notes.filter { $0.pinned }.sorted { $0.mtime > $1.mtime }
-    let preferredNotes = notes.filter { !$0.pinned && preferred.contains($0.name) }
-    let rest = notes.filter { !$0.pinned && !preferred.contains($0.name) }.sorted { $0.mtime > $1.mtime }
-    return pinnedNotes + preferredNotes + rest
+    NoteStore.shared.scan()
+    return NoteStore.shared.notes()
 }
 
 func jsonString(_ s: String) -> String {
-    let data = try! JSONSerialization.data(withJSONObject: [s], options: [])
-    var str = String(data: data, encoding: .utf8)!
+    // Encode as a JSON string safely. (A malformed note must never crash the app, so no try!.)
+    let data = (try? JSONSerialization.data(withJSONObject: [s], options: [])) ?? Data("[\"\"]".utf8)
+    var str = String(data: data, encoding: .utf8) ?? "\"\""
     str.removeFirst(); str.removeLast()   // strip the [ ]
     // "</script>" inside a note/draft must not terminate the inline <script> block
     return str.replacingOccurrences(of: "</", with: "<\\/")
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKUIDelegate, NSPopoverDelegate {
+// Coalesces rapid note saves into ONE background rebuild of NAS.ctd + the Spotlight launchers.
+// Every save/delete/drag used to spawn its own `rebuild.sh` — which re-codesigns a launcher app
+// per note — so a burst of edits stacked dozens of overlapping shell runs that thrashed the disk
+// and stalled the UI (the "hang when adding notes"). This debounces bursts and runs strictly one
+// rebuild at a time, entirely off the main thread.
+final class RebuildCoordinator {
+    static let shared = RebuildCoordinator()
+    private let queue = DispatchQueue(label: "com.hico.cherry.rebuild")
+    private var pending: DispatchWorkItem?
+    private var running = false
+    private var again = false
+
+    func schedule() {
+        queue.async { [self] in
+            pending?.cancel()
+            let item = DispatchWorkItem { [self] in self.fire() }
+            pending = item
+            queue.asyncAfter(deadline: .now() + 0.6, execute: item)   // trailing debounce
+        }
+    }
+    private func fire() {   // always on `queue`
+        if running { again = true; return }
+        let sh = NOTES_DIR + "/rebuild.sh"
+        guard FileManager.default.isExecutableFile(atPath: sh) else { return }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = [sh]
+        p.terminationHandler = { [self] _ in
+            queue.async { [self] in
+                running = false
+                if again { again = false; fire() }   // saves arrived mid-run → one more pass
+            }
+        }
+        running = true
+        do { try p.run() } catch { running = false }
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKUIDelegate, WKNavigationDelegate, NSPopoverDelegate {
     var statusItem: NSStatusItem!
     let popover = NSPopover()
     var web: WKWebView!
-    var notes: [Note] = []
+    // The popover page is loaded once and kept alive; clicks just tell it which view to show.
+    var pageReady = false
+    var pendingShow: [String: Any]?
     let clips = ClipStore()
+    let screens = ScreenStore.shared
     var clipTimer: Timer?
 
     // Draft preservation: the editor state survives the popover closing (and app relaunch).
@@ -112,57 +155,90 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
               else { UserDefaults.standard.removeObject(forKey: "pendingDraft") } }
     }
     var hotKeyRef: EventHotKeyRef?
+    var hotKeyRef2: EventHotKeyRef?
+
+    // Launching the app again (e.g. from Spotlight) while it's already running
+    // opens the full-screen Liquid Glass window.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        GlassWindowController.shared.show()
+        return true
+    }
+
+    // Menu-bar app: closing the window must never quit it — it lives in the ribbon.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationDidFinishLaunching(_ n: Notification) {
         NSAppleEventManager.shared().setEventHandler(
             self, andSelector: #selector(handleURLEvent(_:reply:)),
             forEventClass: AEEventClass(kInternetEventClass), andEventID: AEEventID(kAEGetURL))
         installEditMenu()   // gives the editor ⌘X/⌘C/⌘V/⌘A/⌘Z (menu-bar apps have no menu otherwise)
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: 34)
         if let b = statusItem.button {
-            b.title = "🍒"   // emoji only — keeps the menu-bar footprint tiny so it isn't pushed behind the notch
-            b.toolTip = "Cherry — notes (⌃⌥⌘C)"
+            b.title = ""
+            b.toolTip = "Cherry — notes (⌃⌥⌘C) · full screen (⌃⌥⌘N)"
             b.target = self; b.action = #selector(toggle(_:))
             b.sendAction(on: [.leftMouseUp, .rightMouseUp])   // right-click → settings menu
+            // googly eyes that follow the cursor; clicks pass through to the button
+            let eyes = GooglyEyesView(frame: NSRect(x: 0, y: 0, width: 30, height: 22))
+            eyes.autoresizingMask = [.width, .height]
+            b.addSubview(eyes)
         }
         try? FileManager.default.createDirectory(atPath: ASSETS_DIR, withIntermediateDirectories: true)
         let cfg = WKWebViewConfiguration()
         cfg.userContentController.add(self, name: "bridge")
-        cfg.setURLSchemeHandler(AssetSchemeHandler(), forURLScheme: "cherry")
+        cfg.setURLSchemeHandler(AssetSchemeHandler(clips: clips), forURLScheme: "cherry")
         web = WKWebView(frame: NSRect(x: 0, y: 0, width: 600, height: 680), configuration: cfg)
         web.uiDelegate = self   // route JS alert/confirm/prompt to native panels
+        web.navigationDelegate = self   // reload the page if WebKit's content process dies
         let vc = NSViewController(); vc.view = web
         popover.contentViewController = vc
         popover.contentSize = NSSize(width: 600, height: 680)
         popover.behavior = .transient
         popover.delegate = self
-        // watch the clipboard in the background so history accumulates even when the panel is closed
-        clipTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in self?.clips.poll() }
+        // watch the clipboard + the screenshot folder in the background so both histories
+        // accumulate even when the panel is closed
+        clipTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.clips.poll(); self?.screens.poll()
+        }
         registerHotKey()   // ⌃⌥⌘C toggles Cherry from anywhere
-        render()
+        // Index the notes folder once, then keep the index fresh from a folder watcher; any change
+        // is pushed straight into the live page (and the full-screen window) — no reload per click.
+        NoteStore.shared.onChange = { [weak self] changed in self?.notesChanged(changed) }
+        NoteStore.shared.startWatching()
+        loadPage()
     }
 
     // MARK: global hotkey (⌃⌥⌘C) — Carbon, no permissions needed
     func registerHotKey() {
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        InstallEventHandler(GetApplicationEventTarget(), { _, _, userData -> OSStatus in
+        InstallEventHandler(GetApplicationEventTarget(), { _, evt, userData -> OSStatus in
+            var hkID = EventHotKeyID()
+            GetEventParameter(evt, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                              nil, MemoryLayout<EventHotKeyID>.size, nil, &hkID)
             let me = Unmanaged<AppDelegate>.fromOpaque(userData!).takeUnretainedValue()
-            DispatchQueue.main.async { me.toggleFromHotKey() }
+            DispatchQueue.main.async {
+                if hkID.id == 2 { GlassWindowController.shared.toggle() }   // ⌃⌥⌘N → full screen
+                else { me.toggleFromHotKey() }                              // ⌃⌥⌘C → popover
+            }
             return noErr
         }, 1, &eventType, Unmanaged.passUnretained(self).toOpaque(), nil)
-        let id = EventHotKeyID(signature: OSType(0x43485259) /* 'CHRY' */, id: 1)
+        let sig = OSType(0x43485259) /* 'CHRY' */
         RegisterEventHotKey(UInt32(kVK_ANSI_C), UInt32(controlKey | optionKey | cmdKey),
-                            id, GetApplicationEventTarget(), 0, &hotKeyRef)
+                            EventHotKeyID(signature: sig, id: 1), GetApplicationEventTarget(), 0, &hotKeyRef)
+        RegisterEventHotKey(UInt32(kVK_ANSI_N), UInt32(controlKey | optionKey | cmdKey),
+                            EventHotKeyID(signature: sig, id: 2), GetApplicationEventTarget(), 0, &hotKeyRef2)
     }
     func toggleFromHotKey() {
-        if popover.isShown { popover.performClose(nil) } else { render(view: savedDraft != nil ? "edit" : "home"); openPopover() }
+        if popover.isShown { popover.performClose(nil) } else { showHome(); openPopover() }
     }
 
     // MARK: right-click settings menu on the menu-bar cherry
     func showContextMenu() {
         let m = NSMenu()
+        m.addItem(withTitle: "Open Full Screen  (⌃⌥⌘N)", action: #selector(menuFullScreen), keyEquivalent: "").target = self
         m.addItem(withTitle: "New Note  (⌘N)", action: #selector(menuNewNote), keyEquivalent: "").target = self
         m.addItem(withTitle: "Clipboard History", action: #selector(menuClips), keyEquivalent: "").target = self
+        m.addItem(withTitle: "Screen Captures", action: #selector(menuScreens), keyEquivalent: "").target = self
         m.addItem(.separator())
         let snd = NSMenuItem(title: "Capture Sound", action: #selector(menuToggleSound), keyEquivalent: "")
         snd.target = self; snd.state = ClipStore.soundOn ? .on : .off; m.addItem(snd)
@@ -176,8 +252,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         statusItem.button?.performClick(nil)
         statusItem.menu = nil   // detach so plain left-click keeps toggling the popover
     }
-    @objc func menuNewNote() { render(view: "new"); openPopover() }
-    @objc func menuClips() { render(view: "clips"); openPopover() }
+    @objc func menuFullScreen() { GlassWindowController.shared.show() }
+    @objc func menuNewNote() { show(["view": "new"]); openPopover() }
+    @objc func menuClips() { show(["view": "clips"]); openPopover() }
+    @objc func menuScreens() { show(["view": "screens"]); openPopover() }
     @objc func menuToggleSound() {
         ClipStore.soundOn.toggle()
         if ClipStore.soundOn { clips.playSound(volume: 1.0) }
@@ -203,6 +281,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     // Installing a minimal Edit menu wires those actions back up through the responder chain.
     func installEditMenu() {
         let mainMenu = NSMenu()
+
+        // Application menu (needed for ⌘Q and a real app menu when the glass window is open)
+        let appItem = NSMenuItem(); mainMenu.addItem(appItem)
+        let appMenu = NSMenu(); appItem.submenu = appMenu
+        appMenu.addItem(withTitle: "Hide Cherry", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Quit Cherry", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+
+        // File menu (New note, Close window)
+        let fileItem = NSMenuItem(); mainMenu.addItem(fileItem)
+        let file = NSMenu(title: "File"); fileItem.submenu = file
+        file.addItem(withTitle: "New Note", action: #selector(menuNewNote), keyEquivalent: "n").target = self
+        file.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+
         let editItem = NSMenuItem(); mainMenu.addItem(editItem)
         let edit = NSMenu(title: "Edit"); editItem.submenu = edit
         edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
@@ -239,51 +331,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         completionHandler(a.runModal() == .alertFirstButtonReturn ? tf.stringValue : nil)
     }
 
-    func render(view: String = "home", active: Int = 0) {
-        notes = loadNotes()
-        let items = notes.map { n in
-            let tagArr = "[" + n.tags.map { jsonString($0) }.joined(separator: ",") + "]"
-            return "{name:\(jsonString(n.name)),title:\(jsonString(n.title)),category:\(jsonString(n.category)),tags:\(tagArr),body:\(jsonString(n.body)),mtime:\(Int(n.mtime)),pinned:\(n.pinned)}"
-        }.joined(separator: ",")
-        let idx = (active >= 0 && active < notes.count) ? active : 0
-        let draftJSON: String = {
-            guard let d = savedDraft, let data = try? JSONSerialization.data(withJSONObject: d) else { return "null" }
-            return (String(data: data, encoding: .utf8) ?? "null").replacingOccurrences(of: "</", with: "<\\/")
-        }()
-        let html = htmlTemplate
-            .replacingOccurrences(of: "/*__NOTES__*/", with: "[\(items)]")
-            .replacingOccurrences(of: "/*__CLIPS__*/", with: clips.injectJSON())
-            .replacingOccurrences(of: "/*__VIEW__*/", with: view)
-            .replacingOccurrences(of: "/*__ACTIVE__*/", with: String(idx))
-            .replacingOccurrences(of: "/*__DRAFT__*/null", with: draftJSON)
-        web.loadHTMLString(html, baseURL: nil)
+    // MARK: the popover page — built once, then driven with small JS calls
+
+    func notesJSON() -> String { jsText(NoteStore.shared.notes().map { NoteStore.shared.meta($0) }) }
+
+    /// Load the page. The only data baked in is the slim note index (title/category/tags/preview —
+    /// no bodies); bodies, run logs, clipboard and screen lists are fetched on demand.
+    func loadPage() {
+        pageReady = false
+        NoteStore.shared.ensureScanned()
+        web.loadHTMLString(htmlTemplate.replacingOccurrences(of: "/*__NOTES__*/", with: notesJSON()), baseURL: nil)
     }
+    func js(_ code: String) { web.evaluateJavaScript(code, completionHandler: nil) }
+
+    /// Tell the live page which view to show (queued until the page has booted).
+    func show(_ cmd: [String: Any]) {
+        if pageReady { js("window.__show(\(jsText(cmd)))") } else { pendingShow = cmd }
+        // Catch edits the folder watcher can't see (in-place writes by other tools) — off the main thread.
+        NoteStore.shared.scheduleScan()
+    }
+    func showHome() {
+        var cmd: [String: Any] = ["view": savedDraft != nil ? "edit" : "home"]
+        if let d = savedDraft { cmd["draft"] = d }
+        show(cmd)
+    }
+    /// Push the refreshed index into the page (and the full-screen window, if it's open).
+    func notesChanged(_ changed: Set<String>) {
+        if pageReady { js("window.__setNotes(\(notesJSON()), \(jsText(Array(changed))))") }
+        // Refresh the full-screen window too — but never under an unsaved draft, and not for run logs.
+        let g = GlassWindowController.shared
+        if let w = g.window, w.isVisible, !g.store.dirty, !g.store.isNew, changed.contains(where: { !isRunLogName($0) }) { g.store.reload() }
+    }
+    /// A crashed WebKit content process leaves a blank popover — rebuild the page.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { loadPage() }
 
     // Open the popover focused on a given note (by file name or tab title). Used by the per-note Spotlight apps.
     func showNote(named name: String) {
         let want = name.lowercased()
-        notes = loadNotes()
-        let idx = notes.firstIndex { $0.name.lowercased() == want || $0.title.lowercased() == want } ?? 0
-        render(view: "note", active: idx)
+        let all = NoteStore.shared.notes() + NoteStore.shared.runs()
+        let n = all.first { $0.name.lowercased() == want || $0.title.lowercased() == want }
+        if let n = n { show(["view": "note", "name": n.name]) } else { show(["view": "home"]) }
         openPopover()
     }
 
     func openPopover() {
         NSApp.activate(ignoringOtherApps: true)
-        if let b = statusItem.button {
-            if popover.isShown { popover.performClose(nil) }
-            popover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.makeKeyAndOrderFront(nil)
-        }
+        guard let b = statusItem.button else { return }
+        // If it's already up, show() has already switched its view — don't tear the
+        // window down and re-show it in the same runloop tick. That close+show churn (and poking
+        // the popover's private window with makeKeyAndOrderFront) is what drove the intermittent
+        // _NSWindowTransformAnimation over-release crash during CoreAnimation commit.
+        if popover.isShown { return }
+        popover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY)
     }
 
-    // Persist edits, then regenerate the CherryTree doc + Spotlight launchers in the background.
-    func rebuild() {
-        let sh = NOTES_DIR + "/rebuild.sh"
-        guard FileManager.default.isExecutableFile(atPath: sh) else { return }
-        let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/bash"); p.arguments = [sh]
-        try? p.run()
-    }
+    // Persist edits, then regenerate the CherryTree doc + Spotlight launchers — debounced and
+    // serialized off the main thread so a burst of saves can't stack overlapping rebuilds.
+    func rebuild() { RebuildCoordinator.shared.schedule() }
 
     // custom URL scheme: nasnote://<name>
     @objc func handleURLEvent(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
@@ -295,9 +399,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     @objc func toggle(_ sender: Any?) {
         if NSApp.currentEvent?.type == .rightMouseUp { showContextMenu(); return }
+        // Left-click the ribbon eyes → the quick-note popover (as before).
         if popover.isShown { popover.performClose(sender); return }
-        // reload notes each open so edits show up; resume an interrupted edit if one exists
-        render(view: savedDraft != nil ? "edit" : "home")
+        showHome()
         openPopover()
     }
 
@@ -319,16 +423,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             guard let name = body["name"] as? String, !name.isEmpty,
                   let text = body["text"] as? String ?? body["body"] as? String else { break }
             let safe = name.replacingOccurrences(of: "/", with: "-")
-            try? FileManager.default.createDirectory(atPath: NOTES_DIR, withIntermediateDirectories: true)
-            try? text.write(toFile: NOTES_DIR + "/" + safe + ".md", atomically: true, encoding: .utf8)
+            NoteStore.shared.write(name: safe, body: text)   // file + index together
             savedDraft = nil
             rebuild()
+            notesChanged([safe])
         case "delete":
             guard let name = body["name"] as? String, !name.isEmpty else { break }
             let safe = name.replacingOccurrences(of: "/", with: "-")
-            // recoverable: the note goes to the macOS Trash, not straight to oblivion
-            try? FileManager.default.trashItem(at: URL(fileURLWithPath: NOTES_DIR + "/" + safe + ".md"), resultingItemURL: nil)
+            NoteStore.shared.delete(name: safe)   // recoverable: goes to the macOS Trash
             rebuild()
+            notesChanged([safe])
+        // ---- on-demand data for the live page ----
+        case "ready":   // page script finished booting
+            pageReady = true
+            if let p = pendingShow { pendingShow = nil; show(p) }
+        case "body":    // full text (+ backlinks) of one note, fetched when it's opened
+            guard let name = body["name"] as? String, let n = NoteStore.shared.note(name) else { break }
+            let bl = NoteStore.shared.backlinks(to: n).map { ["name": $0.name, "title": $0.title] }
+            js("window.__body(\(jsText(["name": name, "body": n.body, "backlinks": bl])))")
+        case "runs":    // one page of run logs (agent filter / search / offset)
+            let agent = (body["agent"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            let q = body["q"] as? String ?? ""
+            let offset = body["offset"] as? Int ?? 0, limit = body["limit"] as? Int ?? 40
+            DispatchQueue.global(qos: .userInitiated).async {
+                let page = NoteStore.shared.runsPage(agent: agent, q: q, offset: offset, limit: limit)
+                DispatchQueue.main.async { self.js("window.__runsPage(\(jsText(page)))") }
+            }
+        case "search":  // full-text search across ordinary notes (titles/tags/previews match locally)
+            let q = body["q"] as? String ?? ""
+            DispatchQueue.global(qos: .userInitiated).async {
+                let names = NoteStore.shared.search(q)
+                DispatchQueue.main.async { self.js("window.__searchResult(\(jsText(["q": q, "names": names])))") }
+            }
+        case "clips":
+            js("window.__clips(\(clips.injectJSON()))")
+        case "screens":
+            js("window.__screens(\(screens.injectJSON()))")
         case "clip-copy":
             if let id = body["id"] as? String { clips.copyBack(id) }   // in-app toast handles feedback
         case "clip-copy-path":
@@ -347,6 +477,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             if let id = body["id"] as? String { clips.delete(id) }
         case "clip-clear":
             clips.clearAll()
+        case "screen-open":
+            if let id = body["id"] as? String, let p = screens.path(id) { NSWorkspace.shared.open(URL(fileURLWithPath: p)) }
+        case "screen-reveal":
+            if let id = body["id"] as? String, let p = screens.path(id) { NSWorkspace.shared.selectFile(p, inFileViewerRootedAtPath: "") }
+        case "screen-copy-file":
+            if let id = body["id"] as? String { screens.copyFile(id) }
+        case "screen-note":
+            if let id = body["id"] as? String { screens.setNote(id, (body["note"] as? String) ?? "") }
+        case "screen-delete":
+            if let id = body["id"] as? String { screens.forget(id) }
         case "attach":
             attachViaPanel()
         case "paste-attach":
@@ -367,6 +507,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             savedDraft = nil
         case "export-pdf":
             exportPDF(title: body["name"] as? String ?? "note")
+        case "open-app":
+            popover.performClose(nil)
+            GlassWindowController.shared.show()
+        case "open-note":
+            popover.performClose(nil)
+            GlassWindowController.shared.show()
+            if let name = body["name"] as? String, !name.isEmpty {
+                GlassWindowController.shared.store.openNamed(name)
+            }
         case "quit":
             NSApp.terminate(nil)
         default: break
@@ -399,9 +548,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         catch { return nil }
     }
     private func snippet(for name: String) -> String {
-        let e = (name as NSString).pathExtension.lowercased()
-        let images = ["png","jpg","jpeg","gif","heic","webp","tiff","tif","bmp","svg"]
-        return images.contains(e) ? "\n![\(name)](assets/\(name))\n" : "\n[\(name)](assets/\(name))\n"
+        let e = (name as NSString).pathExtension
+        // Images and videos embed inline (![]); everything else is a link.
+        return (isImageExt(e) || isVideoExt(e)) ? "\n![\(name)](assets/\(name))\n" : "\n[\(name)](assets/\(name))\n"
     }
     private func insertInEditor(_ names: [String]) {
         guard !names.isEmpty else { return }
