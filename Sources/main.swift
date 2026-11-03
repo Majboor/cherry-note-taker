@@ -4,14 +4,39 @@ import Carbon.HIToolbox
 import ServiceManagement
 import UniformTypeIdentifiers
 
-// Notes store — override with NAS_NOTES_DIR; defaults to ~/.rpidrive/notes.
+// Notes store. Order: $NAS_NOTES_DIR, then `defaults write com.hico.nasnotes notesDir <path>`,
+// then ~/.rpidrive/notes if it already exists (older installs), else ~/Documents/Cherry.
 let NOTES_DIR: String = {
     let env = ProcessInfo.processInfo.environment["NAS_NOTES_DIR"] ?? ""
-    return ((env.isEmpty ? "~/.rpidrive/notes" : env) as NSString).expandingTildeInPath
+    if !env.isEmpty { return (env as NSString).expandingTildeInPath }
+    if let d = UserDefaults.standard.string(forKey: "notesDir"), !d.isEmpty { return (d as NSString).expandingTildeInPath }
+    let legacy = ("~/.rpidrive/notes" as NSString).expandingTildeInPath
+    if FileManager.default.fileExists(atPath: legacy) { return legacy }
+    return ("~/Documents/Cherry" as NSString).expandingTildeInPath
 }()
+
+/// First run from a downloaded build: create the notes folder, seed a welcome note, and put the
+/// helper scripts (bundled in Resources) next to the notes, where the rebuild step expects them.
+/// Never overwrites scripts or notes that are already there.
+func prepareNotesDir() {
+    let fm = FileManager.default
+    try? fm.createDirectory(atPath: NOTES_DIR, withIntermediateDirectories: true)
+    guard let res = Bundle.main.resourcePath else { return }
+    for s in ["rebuild.sh", "make-launchers.sh"] {
+        let dst = NOTES_DIR + "/" + s, src = res + "/" + s
+        if !fm.fileExists(atPath: dst), fm.fileExists(atPath: src) {
+            try? fm.copyItem(atPath: src, toPath: dst)
+            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dst)
+        }
+    }
+    let hasNotes = ((try? fm.contentsOfDirectory(atPath: NOTES_DIR)) ?? []).contains { $0.hasSuffix(".md") }
+    if !hasNotes, fm.fileExists(atPath: res + "/welcome.md") {
+        try? fm.copyItem(atPath: res + "/welcome.md", toPath: NOTES_DIR + "/welcome.md")
+    }
+}
 let ASSETS_DIR = NOTES_DIR + "/assets"   // embedded images / PDFs / attachments live here
 let CTD = NOTES_DIR + "/NAS.ctd"
-let CHERRYTREE = "/opt/homebrew/bin/cherrytree"
+let CHERRYTREE = ["/opt/homebrew/bin/cherrytree", "/usr/local/bin/cherrytree"].first { FileManager.default.isExecutableFile(atPath: $0) } ?? "/opt/homebrew/bin/cherrytree"
 
 struct Note { let name: String; let title: String; let category: String; let tags: [String]
               let body: String; let mtime: Double; let pinned: Bool; let parent: String? }
@@ -126,6 +151,8 @@ final class RebuildCoordinator {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/bash")
         p.arguments = [sh]
+        var env = ProcessInfo.processInfo.environment; env["NAS_NOTES_DIR"] = NOTES_DIR
+        p.environment = env   // the script's own default is ~/.rpidrive/notes
         p.terminationHandler = { [self] _ in
             queue.async { [self] in
                 running = false
@@ -168,6 +195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationDidFinishLaunching(_ n: Notification) {
+        prepareNotesDir()
         NSAppleEventManager.shared().setEventHandler(
             self, andSelector: #selector(handleURLEvent(_:reply:)),
             forEventClass: AEEventClass(kInternetEventClass), andEventID: AEEventID(kAEGetURL))

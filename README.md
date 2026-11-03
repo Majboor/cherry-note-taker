@@ -7,8 +7,8 @@
 Markdown notes, Spotlight launchers, CherryTree export, and a clipboard history that
 auto-sorts everything you copy — in ~300 lines of dependency-free Swift.
 
-![version](https://img.shields.io/badge/version-1.8.0-2563eb)
-![platform](https://img.shields.io/badge/macOS-11%2B-lightgrey?logo=apple)
+![version](https://img.shields.io/badge/version-1.9.0-2563eb)
+![platform](https://img.shields.io/badge/macOS-14%2B-lightgrey?logo=apple)
 ![Swift](https://img.shields.io/badge/Swift-5-f05138?logo=swift&logoColor=white)
 ![license](https://img.shields.io/badge/license-MIT-22c55e)
 ![deps](https://img.shields.io/badge/dependencies-none-8b5cf6)
@@ -83,7 +83,19 @@ Plus:
 
 ## 🚀 Install
 
-Requirements: macOS 11+, Xcode command-line tools (`swiftc`). CherryTree optional (`brew install cherrytree`).
+Website: **https://cherry.waleeds.world**. Requires macOS 14 (Sonoma) or newer, Apple silicon or Intel.
+
+```bash
+brew install --cask majboor/tap/cherry                    # Homebrew
+curl -fsSL https://cherry.waleeds.world/install.sh | bash  # or the install script
+```
+
+Or download the signed, notarized [Cherry.dmg](https://cherry.waleeds.world/Cherry.dmg).
+AI agents: point yours at [AGENTS.md](https://cherry.waleeds.world/AGENTS.md) and it installs Cherry for you.
+
+### Build from source
+
+Requirements: Xcode command-line tools (`swiftc`). CherryTree optional (`brew install cherrytree`).
 
 ```bash
 git clone https://github.com/Majboor/cherry-note-taker.git

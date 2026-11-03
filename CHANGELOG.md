@@ -3,6 +3,20 @@
 All notable changes to this project are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.9.0]
+### Added
+- Signed and notarized download (Cherry.dmg, Apple silicon + Intel) and a Homebrew cask:
+  `brew install --cask majboor/tap/cherry`. Built by `packaging/release.sh`.
+- App icon (`packaging/Cherry.icns`, drawn by `packaging/make-icon.swift`).
+- First launch sets itself up: creates the notes folder, seeds a welcome note, and installs the
+  helper scripts next to the notes.
+### Changed
+- Notes folder for new installs is `~/Documents/Cherry` (existing `~/.rpidrive/notes` keeps working;
+  override with `NAS_NOTES_DIR` or `defaults write com.hico.nasnotes notesDir <path>`).
+- The CherryTree export step is skipped on Macs without the developer tools instead of
+  prompting to install them. CherryTree is found in `/usr/local/bin` too.
+- Requires macOS 14 (Sonoma) or newer.
+
 ## [1.8.0]
 
 ### Changed

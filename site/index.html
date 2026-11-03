@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cherry — open-source menu-bar notes for macOS</title>
+<meta name="description" content="Cherry is a free, open-source macOS menu-bar notes app with a built-in clipboard history. Plain Markdown files, Spotlight launchers, no account. Install with Homebrew, a signed DMG, or let your AI agent install it.">
+<link rel="icon" href="/favicon.png">
+<meta property="og:title" content="Cherry — open-source menu-bar notes for macOS">
+<meta property="og:description" content="Markdown notes and a clipboard history in your menu bar. Free, MIT licensed, signed and notarized.">
+<meta property="og:image" content="https://cherry.waleeds.world/img/home.png">
+<style>
+  :root { --bg:#fbf6ee; --ink:#1d1a17; --mute:#6f675e; --line:#e7ddcf; --card:#fffdf9; --red:#c8102e; --red-d:#9e0b23; --green:#2f6b2a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.55 -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif; }
+  a { color:var(--red); }
+  .wrap { max-width:1040px; margin:0 auto; padding:0 24px; }
+  header { display:flex; align-items:center; justify-content:space-between; padding:22px 0; }
+  .brand { display:flex; align-items:center; gap:10px; font-weight:650; font-size:18px; color:var(--ink); text-decoration:none; }
+  .brand img { width:30px; height:30px; }
+  nav a { color:var(--mute); text-decoration:none; margin-left:22px; font-size:15px; }
+  nav a:hover { color:var(--ink); }
+  .hero { display:grid; grid-template-columns:1.1fr .9fr; gap:48px; align-items:center; padding:40px 0 64px; }
+  .tags { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:18px; }
+  .tag { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; font-weight:600; padding:4px 10px; border-radius:999px; border:1px solid var(--line); background:var(--card); color:var(--mute); text-decoration:none; }
+  .tag.os { border-color:#b9d8b4; background:#eef7ec; color:var(--green); }
+  .tag.os::before { content:""; width:7px; height:7px; border-radius:50%; background:#3c9a33; }
+  .tag img { width:13px; height:13px; }
+  h1 { font-size:52px; line-height:1.05; letter-spacing:-.02em; margin:0 0 18px; font-weight:750; }
+  h1 em { font-style:normal; color:var(--red); }
+  .lede { font-size:19px; color:var(--mute); max-width:520px; margin:0 0 28px; }
+  .cta { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+  .btn { display:inline-flex; align-items:center; gap:9px; padding:12px 18px; border-radius:10px; font-weight:600; font-size:15px; text-decoration:none; border:1px solid transparent; }
+  .btn.primary { background:var(--red); color:#fff; }
+  .btn.primary:hover { background:var(--red-d); }
+  .btn.ghost { border-color:var(--line); color:var(--ink); background:var(--card); }
+  .btn img { width:17px; height:17px; }
+  .btn.primary img { filter:invert(1); }
+  .fine { font-size:13px; color:var(--mute); margin-top:12px; }
+  .shot { justify-self:center; width:100%; max-width:380px; border-radius:14px; box-shadow:0 30px 60px -20px rgba(60,30,10,.35), 0 0 0 1px rgba(0,0,0,.06); }
+  section { padding:56px 0; border-top:1px solid var(--line); }
+  h2 { font-size:30px; letter-spacing:-.01em; margin:0 0 8px; }
+  .sub { color:var(--mute); margin:0 0 28px; max-width:640px; }
+  .methods { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+  .m { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px; display:flex; flex-direction:column; gap:12px; }
+  .m h3 { margin:0; font-size:17px; display:flex; align-items:center; gap:9px; }
+  .m h3 img { width:20px; height:20px; }
+  .m p { margin:0; color:var(--mute); font-size:14.5px; }
+  .code { position:relative; background:#1d1a17; color:#f6efe4; border-radius:10px; padding:12px 44px 12px 14px; font:13.5px/1.5 ui-monospace,"SF Mono",Menlo,monospace; white-space:pre-wrap; word-break:break-word; }
+  .copy { position:absolute; top:8px; right:8px; border:0; background:#3a342e; color:#f6efe4; border-radius:6px; font-size:12px; padding:4px 8px; cursor:pointer; }
+  .copy.done { background:#3c9a33; }
+  .agents { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:18px; }
+  .agent { display:flex; align-items:center; gap:8px; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:8px 13px; font-size:14px; font-weight:600; }
+  .agent img { width:20px; height:20px; }
+  .agentgrid { display:grid; grid-template-columns:1.3fr 1fr; gap:20px; align-items:start; }
+  .steps { margin:0; padding-left:20px; color:var(--mute); font-size:14.5px; }
+  .steps li { margin-bottom:6px; }
+  .features { display:grid; grid-template-columns:repeat(3,1fr); gap:22px 28px; }
+  .f h4 { margin:0 0 4px; font-size:15.5px; }
+  .f p { margin:0; color:var(--mute); font-size:14.5px; }
+  .gallery { display:grid; grid-template-columns:repeat(3,1fr); gap:18px; margin-top:32px; }
+  .gallery figure { margin:0; }
+  .gallery img { width:100%; border-radius:12px; box-shadow:0 0 0 1px rgba(0,0,0,.06), 0 14px 30px -18px rgba(60,30,10,.4); }
+  .gallery figcaption { font-size:13px; color:var(--mute); margin-top:8px; text-align:center; }
+  .oss { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+  .oss ul { margin:0; padding-left:20px; color:var(--mute); }
+  footer { padding:36px 0 56px; color:var(--mute); font-size:13.5px; border-top:1px solid var(--line); display:flex; justify-content:space-between; flex-wrap:wrap; gap:12px; }
+  @media (max-width:860px) {
+    .hero, .agentgrid, .oss { grid-template-columns:1fr; }
+    .methods, .features, .gallery { grid-template-columns:1fr; }
+    h1 { font-size:40px; }
+    nav a:not(:last-child) { display:none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="brand" href="/"><img src="/img/icon.png" alt="">Cherry</a>
+    <nav>
+      <a href="#install">Install</a>
+      <a href="#agent">With an AI agent</a>
+      <a href="#features">Features</a>
+      <a href="https://github.com/Majboor/cherry-note-taker">GitHub</a>
+    </nav>
+  </header>
+
+  <div class="hero">
+    <div>
+      <div class="tags">
+        <a class="tag os" href="https://github.com/Majboor/cherry-note-taker">Open source · MIT</a>
+        <span class="tag"><img src="/logos/apple.svg" alt="">macOS 14+ · Apple silicon &amp; Intel</span>
+        <span class="tag">Signed &amp; notarized</span>
+      </div>
+      <h1>Your notes, <em>one click</em> away in the menu bar.</h1>
+      <p class="lede">Cherry keeps Markdown notes and everything you copy in a small window under your menu bar. Notes are plain files in a folder you own. No account, no cloud, free.</p>
+      <div class="cta">
+        <a class="btn primary" href="/Cherry.dmg"><img src="/logos/apple.svg" alt="">Download for Mac</a>
+        <a class="btn ghost" href="#install"><img src="/logos/homebrew.svg" alt="">Install with Homebrew</a>
+      </div>
+      <p class="fine">Version <span id="ver">1.9.0</span> · <a href="/Cherry.dmg.sha256">SHA-256</a> · <a href="https://github.com/Majboor/cherry-note-taker/blob/main/CHANGELOG.md">Changelog</a></p>
+    </div>
+    <img class="shot" src="/img/home.png" alt="Cherry open under the menu bar, showing the notes list">
+  </div>
+
+  <section id="install">
+    <h2>Install</h2>
+    <p class="sub">Pick one. All three install the same signed app into Applications.</p>
+    <div class="methods">
+      <div class="m">
+        <h3><img src="/logos/homebrew.svg" alt="">Homebrew</h3>
+        <div class="code"><button class="copy">Copy</button>brew install --cask majboor/tap/cherry</div>
+        <p>Updates with <code>brew upgrade</code>.</p>
+      </div>
+      <div class="m">
+        <h3><img src="/logos/apple.svg" alt="">Download</h3>
+        <p>Open <a href="/Cherry.dmg">Cherry.dmg</a> and drag Cherry into Applications. Then open it from Launchpad or Spotlight.</p>
+        <p>Look for the note icon in your menu bar.</p>
+      </div>
+      <div class="m">
+        <h3>Terminal</h3>
+        <div class="code"><button class="copy">Copy</button>curl -fsSL https://cherry.waleeds.world/install.sh | bash</div>
+        <p>Downloads the DMG, checks its SHA-256 and Apple's notarization, installs and opens Cherry. <a href="/install.sh">Read the script</a>.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="agent">
+    <h2>Or let your AI agent install it</h2>
+    <p class="sub">Paste this into any coding agent that can run commands on your Mac. It reads the install guide, installs Cherry and tells you where your notes live.</p>
+    <div class="agents">
+      <span class="agent"><img src="/logos/claude.svg" alt="">Claude Code</span>
+      <span class="agent"><img src="/logos/openai.svg" alt="">Codex / ChatGPT</span>
+      <span class="agent"><img src="/logos/cursor.svg" alt="">Cursor</span>
+      <span class="agent"><img src="/logos/googlegemini.svg" alt="">Gemini CLI</span>
+      <span class="agent"><img src="/logos/githubcopilot.svg" alt="">GitHub Copilot</span>
+      <span class="agent"><img src="/logos/windsurf.svg" alt="">Windsurf</span>
+    </div>
+    <div class="agentgrid">
+      <div>
+        <div class="code"><button class="copy">Copy</button>Install Cherry, the open-source macOS menu-bar notes app, on this Mac. Follow https://cherry.waleeds.world/AGENTS.md. Use Homebrew if I have it, otherwise the install script. Then open Cherry and tell me where my notes folder is.</div>
+        <p class="fine">Or straight from your terminal:</p>
+        <div class="code"><button class="copy">Copy</button>claude "Install Cherry from https://cherry.waleeds.world/AGENTS.md"</div>
+      </div>
+      <ol class="steps">
+        <li>The agent reads <a href="/AGENTS.md">AGENTS.md</a>, a short guide written for agents.</li>
+        <li>It installs with Homebrew or the script, which verifies the download before installing.</li>
+        <li>It opens Cherry and checks it's running.</li>
+        <li>It can also add notes for you: a note is just a Markdown file in your notes folder.</li>
+      </ol>
+    </div>
+  </section>
+
+  <section id="features">
+    <h2>What it does</h2>
+    <p class="sub">A small native app: AppKit and WebKit, no dependencies.</p>
+    <div class="features">
+      <div class="f"><h4>Markdown notes</h4><p>Write, edit and pin notes. Each one is a plain <code>.md</code> file you can open anywhere.</p></div>
+      <div class="f"><h4>Clipboard history</h4><p>Everything you copy, sorted into links, code, colours, errors, paths, images and files. Searchable.</p></div>
+      <div class="f"><h4>Spotlight launchers</h4><p>Every note gets its own launcher. ⌘Space, type the name, and you're there. Or ⌃⌥⌘C anywhere.</p></div>
+      <div class="f"><h4>Images, PDFs and links</h4><p>Paste or attach images and PDFs. <code>[[Wiki links]]</code> connect notes, with backlinks.</p></div>
+      <div class="f"><h4>Screenshots tab</h4><p>New screenshots and recordings show up on their own. Write a note on one in a click.</p></div>
+      <div class="f"><h4>Made for agents too</h4><p>Agents can write notes by saving files to the folder. Their run logs stay out of your list.</p></div>
+    </div>
+    <div class="gallery">
+      <figure><img src="/img/home.png" alt="All notes"><figcaption>All notes</figcaption></figure>
+      <figure><img src="/img/note.png" alt="Reading a note"><figcaption>Reading a note</figcaption></figure>
+      <figure><img src="/img/clips.png" alt="Clipboard history"><figcaption>Clipboard history</figcaption></figure>
+    </div>
+  </section>
+
+  <section>
+    <div class="oss">
+      <div>
+        <h2>Open source</h2>
+        <p class="sub">Cherry is MIT licensed. Read the code, build it yourself, or send a pull request.</p>
+        <a class="btn ghost" href="https://github.com/Majboor/cherry-note-taker"><img src="/logos/github.svg" alt="">View on GitHub</a>
+      </div>
+      <div>
+        <h2>Build from source</h2>
+        <div class="code"><button class="copy">Copy</button>git clone https://github.com/Majboor/cherry-note-taker.git
+cd cherry-note-taker && ./Scripts/build.sh</div>
+        <p class="fine">Needs the Xcode command-line tools.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Cherry · MIT License</span>
+    <span><a href="https://github.com/Majboor/cherry-note-taker/issues">Report an issue</a> · <a href="/AGENTS.md">AGENTS.md</a></span>
+  </footer>
+</div>
+<script>
+  document.querySelectorAll('.copy').forEach(b => b.addEventListener('click', () => {
+    const t = [...b.parentElement.childNodes].filter(n => n !== b).map(n => n.textContent).join('').trim();
+    navigator.clipboard.writeText(t).then(() => { b.textContent = 'Copied'; b.classList.add('done');
+      setTimeout(() => { b.textContent = 'Copy'; b.classList.remove('done'); }, 1500); });
+  }));
+</script>
+</body>
+</html>

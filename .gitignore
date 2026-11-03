@@ -9,3 +9,5 @@ DerivedData/
 
 # The notes store is user data and never committed (may contain secrets).
 # Notes live in $NAS_NOTES_DIR (default ~/.rpidrive/notes), outside this repo.
+dist/
+dist-build.log
